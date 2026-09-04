@@ -78,12 +78,14 @@ function sheetToText(sheet) {
 // MCL's audit annexure templates have a header row ending "...Exception,
 // Remarks" and their own stated rule: "Each EXCEPTION line becomes an
 // Observation; this sheet is its cited Annexure." When a sheet matches that
-// template, transcribe only the rows literally marked EXCEPTION into plain
-// sentences built from that row's own column headers and values (no
-// interpretation, nothing invented) instead of dumping the whole sheet.
-// Returns null when the sheet doesn't have a recognizable "Exception" column,
-// so the caller can fall back to a raw dump for sheets that aren't this
-// template.
+// template, transcribe every row that either (a) is literally marked
+// EXCEPTION, or (b) has a non-empty Remarks entry — auditors often note a
+// genuine finding in Remarks (e.g. "Form-H not provided by management")
+// without also flipping the Exception dropdown — into plain sentences built
+// from that row's own column headers and values (no interpretation, nothing
+// invented) instead of dumping the whole sheet. Returns null when the sheet
+// doesn't have a recognizable "Exception" column, so the caller can fall
+// back to a raw dump for sheets that aren't this template.
 function sheetToObservationText(sheet) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
   let headerIdx = -1;
@@ -99,7 +101,9 @@ function sheetToObservationText(sheet) {
     }
   }
   if (headerIdx === -1) return null;
+  const remarksCol = headerRow.findIndex((h) => String(h || "").trim().toLowerCase() === "remarks");
 
+  let anyException = false;
   const sentences = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -108,7 +112,9 @@ function sheetToObservationText(sheet) {
     if (first === "total") continue;
     if (first.startsWith("legend")) break;
     const flag = String(row[exceptionCol] || "").trim().toUpperCase();
-    if (flag !== "EXCEPTION") continue;
+    const remark = remarksCol !== -1 ? String(row[remarksCol] == null ? "" : row[remarksCol]).trim() : "";
+    if (flag === "EXCEPTION") anyException = true;
+    if (flag !== "EXCEPTION" && !remark) continue;
     const parts = [];
     for (let c = 0; c < headerRow.length; c++) {
       if (c === exceptionCol) continue;
@@ -123,11 +129,11 @@ function sheetToObservationText(sheet) {
   }
 
   if (!sentences.length) {
-    return { text: "No rows marked EXCEPTION in this annexure sheet (all items within norms or not yet marked).", hasException: false };
+    return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure sheet.", hasException: false };
   }
   return {
     text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => i + 1 + ") " + s).join("\n"),
-    hasException: true,
+    hasException: anyException,
   };
 }
 
@@ -142,8 +148,17 @@ function extractExcelText(fullPath) {
 
 // Strips everything but letters/digits and lowercases, so "1.1.2. (a)" and
 // "1.1.2a" compare equal when matching an annexure sheet name to a scope ref.
+// Strips spacing/parentheses and folds a trailing ". (a)"-style suffix into
+// "a", but keeps the dots between digit groups intact — stripping ALL
+// punctuation would collapse distinct refs into the same key (e.g. "1.1.1"
+// and "11.1" both became "111"), which could silently misfile a sheet's
+// content into the wrong section.
 function normalizeRef(s) {
-  return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  let t = String(s || "").toLowerCase().trim();
+  t = t.replace(/\s+/g, "");
+  t = t.replace(/[()]/g, "");
+  t = t.replace(/\.([a-z])$/, "$1");
+  return t;
 }
 
 // Copies a source file into a per-point attachment directory, avoiding name
