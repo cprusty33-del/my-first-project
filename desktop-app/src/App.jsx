@@ -51,8 +51,9 @@ export default function App(){
    if(!added||!added.length)return;
    const block=added.filter(f=>f.text).map(f=>"--- From "+f.name+" ---\n"+f.text).join("\n\n");
    const append=(existing)=>block?(existing?existing+"\n\n"+block:block):existing;
+   const anyException=added.some(f=>f.hasException);
    if(kind==="scope"){
-     setData(d=>{const cur=d.scope[ref]||{};const files=[...(cur.files||[]),...added];return{...d,scope:{...d.scope,[ref]:{...cur,files,obs:append(cur.obs||"")}}};});
+     setData(d=>{const cur=d.scope[ref]||{};const files=[...(cur.files||[]),...added];const status=anyException?"EXCEPTION":cur.status;return{...d,scope:{...d.scope,[ref]:{...cur,files,obs:append(cur.obs||""),status}}};});
    }else{
      setData(d=>{const cur=d.them[ref]||{};const files=[...(cur.files||[]),...added];return{...d,them:{...d.them,[ref]:{...cur,files,prob:append(cur.prob||"")}}};});
    }
@@ -70,8 +71,11 @@ export default function App(){
    const byRef=result.byRef||{};
    const matchedRefs=Object.keys(byRef);
    matchedRefs.forEach(ref=>applyAddedFiles("scope",ref,byRef[ref]));
+   const exceptionRefs=matchedRefs.filter(ref=>byRef[ref].some(f=>f.hasException));
    const unmatched=result.unmatched||[];
    let msg="Matched "+matchedRefs.length+" scope point(s) across "+(result.filesProcessed||0)+" file(s).";
+   msg+="\n"+exceptionRefs.length+" point(s) had rows marked EXCEPTION in their annexure — Observation written and Status set to EXCEPTION automatically.";
+   msg+="\n"+(matchedRefs.length-exceptionRefs.length)+" point(s) had no EXCEPTION rows — Status left as-is for you to review.";
    if(unmatched.length){
      msg+="\n\n"+unmatched.length+" sheet(s) could not be matched and were skipped:\n"+unmatched.slice(0,20).map(u=>"• "+u.file+(u.sheet?" ["+u.sheet+"]":"")+" — "+u.reason).join("\n");
      if(unmatched.length>20)msg+="\n… and "+(unmatched.length-20)+" more.";

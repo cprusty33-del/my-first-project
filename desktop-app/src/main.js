@@ -75,11 +75,69 @@ function sheetToText(sheet) {
   return lines.join("\n");
 }
 
+// MCL's audit annexure templates have a header row ending "...Exception,
+// Remarks" and their own stated rule: "Each EXCEPTION line becomes an
+// Observation; this sheet is its cited Annexure." When a sheet matches that
+// template, transcribe only the rows literally marked EXCEPTION into plain
+// sentences built from that row's own column headers and values (no
+// interpretation, nothing invented) instead of dumping the whole sheet.
+// Returns null when the sheet doesn't have a recognizable "Exception" column,
+// so the caller can fall back to a raw dump for sheets that aren't this
+// template.
+function sheetToObservationText(sheet) {
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  let headerIdx = -1;
+  let headerRow = null;
+  let exceptionCol = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const col = rows[i].findIndex((h) => String(h || "").trim().toLowerCase() === "exception");
+    if (col !== -1) {
+      headerIdx = i;
+      headerRow = rows[i];
+      exceptionCol = col;
+      break;
+    }
+  }
+  if (headerIdx === -1) return null;
+
+  const sentences = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row.some((c) => String(c == null ? "" : c).trim() !== "")) continue;
+    const first = String(row[0] || "").trim().toLowerCase();
+    if (first === "total") continue;
+    if (first.startsWith("legend")) break;
+    const flag = String(row[exceptionCol] || "").trim().toUpperCase();
+    if (flag !== "EXCEPTION") continue;
+    const parts = [];
+    for (let c = 0; c < headerRow.length; c++) {
+      if (c === exceptionCol) continue;
+      const label = String(headerRow[c] || "").trim();
+      if (!label || label.toLowerCase() === "sl") continue;
+      const val = row[c];
+      const valStr = val instanceof Date ? val.toLocaleDateString() : String(val == null ? "" : val).trim();
+      if (!valStr) continue;
+      parts.push(label + ": " + valStr);
+    }
+    if (parts.length) sentences.push(parts.join("; ") + ".");
+  }
+
+  if (!sentences.length) {
+    return { text: "No rows marked EXCEPTION in this annexure sheet (all items within norms or not yet marked).", hasException: false };
+  }
+  return {
+    text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => i + 1 + ") " + s).join("\n"),
+    hasException: true,
+  };
+}
+
 function extractExcelText(fullPath) {
   const wb = XLSX.readFile(fullPath);
   const sheetName = wb.SheetNames[0];
-  if (!sheetName) return "";
-  return sheetToText(wb.Sheets[sheetName]);
+  if (!sheetName) return { text: "", hasException: false };
+  const sheet = wb.Sheets[sheetName];
+  const obs = sheetToObservationText(sheet);
+  return obs || { text: sheetToText(sheet), hasException: false };
 }
 
 // Strips everything but letters/digits and lowercases, so "1.1.2. (a)" and
@@ -135,19 +193,20 @@ async function extractPdfText(fullPath) {
 async function extractText(fullPath) {
   const ext = path.extname(fullPath).toLowerCase();
   try {
-    let text = "";
     if ([".xlsx", ".xls", ".xlsm", ".csv"].includes(ext)) {
-      text = extractExcelText(fullPath);
+      const { text, hasException } = extractExcelText(fullPath);
+      return text ? { text: capText(text), hasException } : null;
     } else if (ext === ".docx") {
-      text = await extractDocxText(fullPath);
+      const text = await extractDocxText(fullPath);
+      return text ? { text: capText(text), hasException: false } : null;
     } else if (ext === ".doc") {
-      text = await extractDocText(fullPath);
+      const text = await extractDocText(fullPath);
+      return text ? { text: capText(text), hasException: false } : null;
     } else if (ext === ".pdf") {
-      text = await extractPdfText(fullPath);
-    } else {
-      return null;
+      const text = await extractPdfText(fullPath);
+      return text ? { text: capText(text), hasException: false } : null;
     }
-    return text ? capText(text) : null;
+    return null;
   } catch (e) {
     return null;
   }
@@ -171,8 +230,8 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
   for (const srcPath of result.filePaths) {
     const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
     const full = resolveAttachmentPath(meta.relPath);
-    const text = await extractText(full);
-    added.push({ ...meta, text });
+    const extracted = await extractText(full);
+    added.push({ ...meta, text: extracted ? extracted.text : null, hasException: extracted ? extracted.hasException : false });
   }
   return added;
 });
@@ -229,10 +288,13 @@ ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
         unmatched.push({ file: fileBase, sheet: sheetName, reason: "no scope point matches \"" + leadingToken + "\"" });
         continue;
       }
-      const text = capText(sheetToText(wb.Sheets[sheetName]));
+      const sheet = wb.Sheets[sheetName];
+      const obs = sheetToObservationText(sheet);
+      const text = capText(obs ? obs.text : sheetToText(sheet));
+      const hasException = obs ? obs.hasException : false;
       for (const ref of matchedRefs) {
         const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
-        const record = { ...meta, name: fileBase + " — " + sheetName, text };
+        const record = { ...meta, name: fileBase + " — " + sheetName, text, hasException };
         if (!byRef[ref]) byRef[ref] = [];
         byRef[ref].push(record);
       }
