@@ -4,7 +4,13 @@ const os = require("os");
 const fs = require("fs");
 const fsp = require("fs/promises");
 
+const XLSX = require("xlsx");
+const mammoth = require("mammoth");
+const pdfParse = require("pdf-parse/lib/pdf-parse.js");
+const WordExtractor = require("word-extractor");
+
 const PRODUCT_NAME = "MCL Audit Report Builder";
+const MAX_EXTRACT_CHARS = 20000;
 
 // Surface any startup crash as a dialog instead of failing silently
 // (a double-clicked GUI app has no console to print errors to).
@@ -32,6 +38,68 @@ function resolveAttachmentPath(relPath) {
     throw new Error("Invalid attachment path");
   }
   return full;
+}
+
+function capText(text) {
+  if (!text) return text;
+  const trimmed = text.trim();
+  if (trimmed.length <= MAX_EXTRACT_CHARS) return trimmed;
+  return trimmed.slice(0, MAX_EXTRACT_CHARS) + "\n… (truncated, file is longer)";
+}
+
+function extractExcelText(fullPath) {
+  const wb = XLSX.readFile(fullPath);
+  const sheetName = wb.SheetNames[0];
+  if (!sheetName) return "";
+  const sheet = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+  const lines = [];
+  for (const row of rows) {
+    const cells = row.map((c) => String(c == null ? "" : c).trim()).filter(Boolean);
+    if (cells.length) lines.push(cells.join("  |  "));
+  }
+  return lines.join("\n");
+}
+
+async function extractDocxText(fullPath) {
+  const result = await mammoth.extractRawText({ path: fullPath });
+  return (result.value || "").trim();
+}
+
+async function extractDocText(fullPath) {
+  const extractor = new WordExtractor();
+  const doc = await extractor.extract(fullPath);
+  return (doc.getBody() || "").trim();
+}
+
+async function extractPdfText(fullPath) {
+  const buf = await fsp.readFile(fullPath);
+  const data = await pdfParse(buf);
+  return (data.text || "").trim();
+}
+
+// Best-effort text extraction: never throws, returns null on any failure
+// or unsupported type so a bad/locked file just skips text extraction
+// (the file is still attached either way).
+async function extractText(fullPath) {
+  const ext = path.extname(fullPath).toLowerCase();
+  try {
+    let text = "";
+    if ([".xlsx", ".xls", ".xlsm", ".csv"].includes(ext)) {
+      text = extractExcelText(fullPath);
+    } else if (ext === ".docx") {
+      text = await extractDocxText(fullPath);
+    } else if (ext === ".doc") {
+      text = await extractDocText(fullPath);
+    } else if (ext === ".pdf") {
+      text = await extractPdfText(fullPath);
+    } else {
+      return null;
+    }
+    return text ? capText(text) : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 ipcMain.handle("attachments:add", async (event, ctx) => {
@@ -64,11 +132,13 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
     }
     await fsp.copyFile(srcPath, dest);
     const stat = await fsp.stat(dest);
+    const text = await extractText(dest);
     added.push({
       name: path.basename(dest),
       relPath: path.relative(attachmentsRoot(), dest),
       size: stat.size,
       addedAt: new Date().toISOString(),
+      text,
     });
   }
   return added;
@@ -95,7 +165,7 @@ function createWindow() {
     width: 1280,
     height: 860,
     title: PRODUCT_NAME,
-    icon: path.join(__dirname, "assets", "icon.ico"),
+    icon: path.join(__dirname, "..", "assets", "icon.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

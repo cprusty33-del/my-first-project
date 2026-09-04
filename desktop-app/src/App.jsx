@@ -38,8 +38,13 @@ export default function App(){
    if(!window.attachments)return;
    const added=await window.attachments.add({area,period:pid,ref});
    if(!added||!added.length)return;
-   if(kind==="scope"){const cur=(data.scope[ref]||{}).files||[];setScope(ref,"files",[...cur,...added]);}
-   else{const cur=(data.them[ref]||{}).files||[];setThem(ref,"files",[...cur,...added]);}
+   const block=added.filter(f=>f.text).map(f=>"--- From "+f.name+" ---\n"+f.text).join("\n\n");
+   const append=(existing)=>block?(existing?existing+"\n\n"+block:block):existing;
+   if(kind==="scope"){
+     setData(d=>{const cur=d.scope[ref]||{};const files=[...(cur.files||[]),...added];return{...d,scope:{...d.scope,[ref]:{...cur,files,obs:append(cur.obs||"")}}};});
+   }else{
+     setData(d=>{const cur=d.them[ref]||{};const files=[...(cur.files||[]),...added];return{...d,them:{...d.them,[ref]:{...cur,files,prob:append(cur.prob||"")}}};});
+   }
  }
  async function removeFileAt(kind,ref,idx,relPath){
    if(window.attachments)await window.attachments.remove(relPath);
