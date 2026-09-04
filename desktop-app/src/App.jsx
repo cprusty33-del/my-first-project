@@ -42,7 +42,16 @@ export default function App(){
  const key="mcl_v1:"+area+":"+pid;
  useEffect(()=>{const d=sget(key);setData(d||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
  useEffect(()=>{setSaved(false);const t=setTimeout(()=>{sset(key,data);setSaved(true);},600);return()=>clearTimeout(t);},[data]);
- const coverage=useMemo(()=>{if(area==="CWS Talcher"){return THEMATIC.filter(t=>CWS_APPLIES.has(t[0])).map(t=>[t[0],t[1],"CWS thematic","M"]);}return SCOPE;},[area]);
+ // Appends a 5th element (key) to each row: same as ref, except a small
+ // number of refs in the source data are genuinely duplicated (e.g. "14.3.2"
+ // covers two different questions in Sec 14) — using ref alone as the
+ // storage/React key would make those rows silently share one answer. key
+ // disambiguates storage/lookup; ref is still what's displayed and exported.
+ const coverage=useMemo(()=>{
+   const base=area==="CWS Talcher"?THEMATIC.filter(t=>CWS_APPLIES.has(t[0])).map(t=>[t[0],t[1],"CWS thematic","M"]):SCOPE;
+   const seen={};
+   return base.map(([ref,title,sec,freq])=>{seen[ref]=(seen[ref]||0)+1;const key=seen[ref]>1?ref+"__"+seen[ref]:ref;return[ref,title,sec,freq,key];});
+ },[area]);
  function autoStatus(freq){if(period.type==="M"&&(freq==="Q"||freq==="A"))return "Not due this month";if(period.type==="Q"&&freq==="A")return "Not due this quarter";return "";}
  function reasonFor(freq){return freq==="Q"?"This is a quarterly check — reported at quarter-end.":freq==="A"?"This is an annual check — reported at year-end.":"";}
  function setScope(ref,f,v){setData(d=>({...d,scope:{...d.scope,[ref]:{...(d.scope[ref]||{}),[f]:v}}}));}
@@ -65,7 +74,7 @@ export default function App(){
  }
  async function bulkLoadAnnexures(){
    if(!window.attachments||!window.attachments.bulkAdd)return;
-   const refs=coverage.map(([ref])=>ref);
+   const refs=coverage.map(([,,,,key])=>key);
    const result=await window.attachments.bulkAdd({area,period:pid,refs});
    if(!result)return;
    const byRef=result.byRef||{};
@@ -113,7 +122,7 @@ export default function App(){
    }
  }
  function openFile(relPath){if(window.attachments)window.attachments.open(relPath);}
- const counts=useMemo(()=>{let exc=0,cov=0,nd=0;coverage.forEach(([ref,,,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(st==="EXCEPTION")exc++;if(st&&!st.startsWith("Not due"))cov++;if(st.startsWith("Not due"))nd++;});return{total:coverage.length,exc,cov,nd};},[coverage,data,period]);
+ const counts=useMemo(()=>{let exc=0,cov=0,nd=0;coverage.forEach(([,,,freq,key])=>{const e=data.scope[key]||{};const st=e.status||autoStatus(freq);if(st==="EXCEPTION")exc++;if(st&&!st.startsWith("Not due"))cov++;if(st.startsWith("Not due"))nd++;});return{total:coverage.length,exc,cov,nd};},[coverage,data,period]);
  const daysLeft=Math.ceil((period.due-new Date())/86400000);
  return (
  <div className="min-h-screen bg-slate-50 text-slate-800" style={{fontFamily:"system-ui,Segoe UI,Arial"}}>
@@ -144,14 +153,14 @@ export default function App(){
        </div>
        {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
        <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
-         {coverage.map(([ref,title,sec,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);const nd=st.startsWith("Not due");
-           return(<tr key={ref} className={"border-b align-top "+(st==="EXCEPTION"?"bg-red-50":nd?"bg-amber-50":"")}>
+         {coverage.map(([ref,title,sec,freq,key])=>{const e=data.scope[key]||{};const st=e.status||autoStatus(freq);const nd=st.startsWith("Not due");
+           return(<tr key={key} className={"border-b align-top "+(st==="EXCEPTION"?"bg-red-50":nd?"bg-amber-50":"")}>
              <td className="p-2 font-mono font-bold text-slate-700">{ref}{freq!=="M"&&<span className="ml-1 text-[9px] px-1 rounded bg-slate-200 text-slate-600">{freq}</span>}</td>
              <td className="p-2">{title}<div className="text-[10px] text-slate-400">{sec}</div></td>
-             <td className="p-2"><select value={st} onChange={ev=>setScope(ref,"status",ev.target.value)} className="border rounded px-1 py-1 w-full">{STATUSES.map(s=><option key={s} value={s}>{s||"— select —"}</option>)}</select>{nd&&<div className="text-[10px] text-amber-700 mt-1">{reasonFor(freq)}</div>}</td>
-             <td className="p-2"><textarea value={e.obs||""} onChange={ev=>setScope(ref,"obs",ev.target.value)} rows={2} placeholder={st==="No exception noted"?"No exception noted":"observation…"} className="border rounded w-full p-1 text-xs"/>{e.obs&&<button type="button" onClick={()=>{if(window.confirm("Clear the Observation text for "+ref+"?"))setScope(ref,"obs","");}} className="text-[10px] text-red-600 underline mt-0.5">Clear</button>}</td>
-             <td className="p-2"><textarea value={e.reply||""} onChange={ev=>setScope(ref,"reply",ev.target.value)} rows={2} placeholder="management reply…" className="border rounded w-full p-1 text-xs"/></td>
-             <td className="p-2"><FileCell files={e.files} onAdd={()=>addFiles("scope",ref)} onRemove={(idx,rp)=>removeFileAt("scope",ref,idx,rp)} onOpen={openFile}/></td></tr>);})}
+             <td className="p-2"><select value={st} onChange={ev=>setScope(key,"status",ev.target.value)} className="border rounded px-1 py-1 w-full">{STATUSES.map(s=><option key={s} value={s}>{s||"— select —"}</option>)}</select>{nd&&<div className="text-[10px] text-amber-700 mt-1">{reasonFor(freq)}</div>}</td>
+             <td className="p-2"><textarea value={e.obs||""} onChange={ev=>setScope(key,"obs",ev.target.value)} rows={2} placeholder={st==="No exception noted"?"No exception noted":"observation…"} className="border rounded w-full p-1 text-xs"/>{e.obs&&<button type="button" onClick={()=>{if(window.confirm("Clear the Observation text for "+ref+"?"))setScope(key,"obs","");}} className="text-[10px] text-red-600 underline mt-0.5">Clear</button>}</td>
+             <td className="p-2"><textarea value={e.reply||""} onChange={ev=>setScope(key,"reply",ev.target.value)} rows={2} placeholder="management reply…" className="border rounded w-full p-1 text-xs"/></td>
+             <td className="p-2"><FileCell files={e.files} onAdd={()=>addFiles("scope",key)} onRemove={(idx,rp)=>removeFileAt("scope",key,idx,rp)} onOpen={openFile}/></td></tr>);})}
        </tbody></table></div>)}
    {tab==="exc"&&(<div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-10">Sl</th><th className="p-2">Description</th><th className="p-2">Problem</th><th className="p-2">Auditor's Comment</th><th className="p-2">Management Comment</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
          {THEMATIC.map(([ref,desc])=>{const applies=area!=="CWS Talcher"||CWS_APPLIES.has(ref);const e=data.them[ref]||{};
@@ -192,7 +201,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
    let h="<div style='font-family:Georgia,serif'>";
    h+="<div style='text-align:center'><b>C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</b><br>Internal Audit — "+esc(area)+", MCL &middot; "+esc(period.plabel)+"</div>";
    h+="<h3 style='color:#1F3864'>A. Scope-Coverage Statement</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl No</th><th style='"+th+"'>Scope of Work</th><th style='"+th+"'>Observation</th><th style='"+th+"'>Management Reply</th></tr>";
-   coverage.forEach(([ref,title,,freq])=>{h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(title)+"</td><td style='"+td+"'>"+esc(obsText(ref,freq))+"</td><td style='"+td+"'>"+esc((data.scope[ref]||{}).reply||"")+"</td></tr>";});
+   coverage.forEach(([ref,title,,freq,key])=>{h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(title)+"</td><td style='"+td+"'>"+esc(obsText(key,freq))+"</td><td style='"+td+"'>"+esc((data.scope[key]||{}).reply||"")+"</td></tr>";});
    h+="</table><h3 style='color:#1F3864'>B. Report of Exception — 25 Points</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl</th><th style='"+th+"'>Description</th><th style='"+th+"'>Problem</th><th style='"+th+"'>Auditor's Comment</th><th style='"+th+"'>Management Comment</th></tr>";
    THEMATIC.forEach(([ref,desc])=>{const e=data.them[ref]||{};h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(desc)+"</td><td style='"+td+"'>"+esc(e.prob||"")+"</td><td style='"+td+"'>"+esc(e.aud||"No exception noted")+"</td><td style='"+td+"'>"+esc(e.mgmt||"")+"</td></tr>";});
    h+="</table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
@@ -200,7 +209,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  }
  function reportPayload(){
    const fileBase="Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"");
-   const coverageRows=coverage.map(([ref,title,,freq])=>({ref,title,observation:obsText(ref,freq),reply:(data.scope[ref]||{}).reply||""}));
+   const coverageRows=coverage.map(([ref,title,,freq,key])=>({ref,title,observation:obsText(key,freq),reply:(data.scope[key]||{}).reply||""}));
    const thematicRows=THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return{ref,desc,prob:e.prob||"",aud:e.aud||"No exception noted",mgmt:e.mgmt||""};});
    return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows};
  }
@@ -249,7 +258,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
      <div className="text-center mb-1"><div className="font-bold text-sm">C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</div><div>Internal Audit — {area}, MCL · {period.plabel}</div></div>
      <h3 className="font-bold text-[#1F3864] mt-3 mb-1">A. Scope-Coverage Statement</h3>
      <table className="w-full border-collapse mb-4"><thead><tr className="bg-slate-100"><th className="border p-1 w-16">Sl No</th><th className="border p-1 text-left">Scope of Work</th><th className="border p-1 text-left">Observation</th><th className="border p-1 text-left">Management Reply</th></tr></thead>
-       <tbody>{coverage.map(([ref,title,,freq])=><tr key={ref}><td className="border p-1 font-mono">{ref}</td><td className="border p-1">{title}</td><td className="border p-1">{obsText(ref,freq)}</td><td className="border p-1">{(data.scope[ref]||{}).reply||""}</td></tr>)}</tbody></table>
+       <tbody>{coverage.map(([ref,title,,freq,key])=><tr key={key}><td className="border p-1 font-mono">{ref}</td><td className="border p-1">{title}</td><td className="border p-1">{obsText(key,freq)}</td><td className="border p-1">{(data.scope[key]||{}).reply||""}</td></tr>)}</tbody></table>
      <h3 className="font-bold text-[#1F3864] mt-3 mb-1">B. Report of Exception — 25 Points</h3>
      <table className="w-full border-collapse"><thead><tr className="bg-slate-100"><th className="border p-1 w-10">Sl</th><th className="border p-1 text-left">Description</th><th className="border p-1 text-left">Problem</th><th className="border p-1 text-left">Auditor's Comment</th><th className="border p-1 text-left">Management Comment</th></tr></thead>
        <tbody>{THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return <tr key={ref}><td className="border p-1">{ref}</td><td className="border p-1">{desc}</td><td className="border p-1">{e.prob||""}</td><td className="border p-1">{e.aud||"No exception noted"}</td><td className="border p-1">{e.mgmt||""}</td></tr>;})}</tbody></table>

@@ -146,8 +146,6 @@ function extractExcelText(fullPath) {
   return obs || { text: sheetToText(sheet), hasException: false };
 }
 
-// Strips everything but letters/digits and lowercases, so "1.1.2. (a)" and
-// "1.1.2a" compare equal when matching an annexure sheet name to a scope ref.
 // Strips spacing/parentheses and folds a trailing ". (a)"-style suffix into
 // "a", but keeps the dots between digit groups intact — stripping ALL
 // punctuation would collapse distinct refs into the same key (e.g. "1.1.1"
