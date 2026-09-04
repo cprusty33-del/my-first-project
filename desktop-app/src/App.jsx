@@ -18,6 +18,19 @@ function sget(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null
 function sset(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function download(name,content,mime){try{const b=new Blob([content],{type:mime});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);}catch(e){alert("Download failed: "+e.message);}}
+// Removes the "--- From <name> ---\n<text>" block that addFiles appended for
+// a given attachment, so removing a file also removes its extracted text
+// instead of leaving a stale copy behind.
+function removeExtractedBlock(existing,name){
+ if(!existing)return existing||"";
+ const marker="--- From "+name+" ---";
+ const idx=existing.indexOf(marker);
+ if(idx===-1)return existing;
+ const rest=existing.slice(idx+marker.length);
+ const nextIdx=rest.indexOf("\n\n--- From ");
+ const blockEnd=nextIdx===-1?existing.length:idx+marker.length+nextIdx;
+ return (existing.slice(0,idx)+existing.slice(blockEnd)).replace(/\n{3,}/g,"\n\n").replace(/^\n+|\n+$/g,"");
+}
 
 export default function App(){
  const [area,setArea]=useState("Bharatpur");
@@ -48,8 +61,11 @@ export default function App(){
  }
  async function removeFileAt(kind,ref,idx,relPath){
    if(window.attachments)await window.attachments.remove(relPath);
-   if(kind==="scope"){const cur=(data.scope[ref]||{}).files||[];setScope(ref,"files",cur.filter((_,i)=>i!==idx));}
-   else{const cur=(data.them[ref]||{}).files||[];setThem(ref,"files",cur.filter((_,i)=>i!==idx));}
+   if(kind==="scope"){
+     setData(d=>{const cur=d.scope[ref]||{};const removed=(cur.files||[])[idx];const files=(cur.files||[]).filter((_,i)=>i!==idx);const obs=removed?removeExtractedBlock(cur.obs,removed.name):cur.obs;return{...d,scope:{...d.scope,[ref]:{...cur,files,obs}}};});
+   }else{
+     setData(d=>{const cur=d.them[ref]||{};const removed=(cur.files||[])[idx];const files=(cur.files||[]).filter((_,i)=>i!==idx);const prob=removed?removeExtractedBlock(cur.prob,removed.name):cur.prob;return{...d,them:{...d.them,[ref]:{...cur,files,prob}}};});
+   }
  }
  function openFile(relPath){if(window.attachments)window.attachments.open(relPath);}
  const counts=useMemo(()=>{let exc=0,cov=0,nd=0;coverage.forEach(([ref,,,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(st==="EXCEPTION")exc++;if(st&&!st.startsWith("Not due"))cov++;if(st.startsWith("Not due"))nd++;});return{total:coverage.length,exc,cov,nd};},[coverage,data,period]);
@@ -131,24 +147,32 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
    h+="</table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
    return h;
  }
- async function saveOrDownload(name,html,mime){
-   if(window.reportIO){
-     const r=await window.reportIO.save({suggestedName:name,content:html,mime});
-     if(!r.ok&&!r.canceled)alert("Could not save the file: "+(r.error||"unknown error"));
-   }else{
-     download(name,html,mime);
-   }
+ function reportPayload(){
+   const fileBase="Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"");
+   const coverageRows=coverage.map(([ref,title,,freq])=>({ref,title,observation:obsText(ref,freq),reply:(data.scope[ref]||{}).reply||""}));
+   const thematicRows=THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return{ref,desc,prob:e.prob||"",aud:e.aud||"No exception noted",mgmt:e.mgmt||""};});
+   return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows};
  }
  async function dlWord(){
    try{
-     const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'></head><body>"+buildHTML(true)+"</body></html>";
-     await saveOrDownload("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".doc",html,"application/msword");
+     if(window.reportIO&&window.reportIO.saveDocx){
+       const r=await window.reportIO.saveDocx(reportPayload());
+       if(!r.ok&&!r.canceled)alert("Could not save the file: "+(r.error||"unknown error"));
+     }else{
+       const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'></head><body>"+buildHTML(true)+"</body></html>";
+       download(reportPayload().fileBase+".doc",html,"application/msword");
+     }
    }catch(e){alert("Download Word failed: "+e.message);}
  }
  async function dlExcel(){
    try{
-     const html="<html xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body>"+buildHTML(false)+"</body></html>";
-     await saveOrDownload("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".xls",html,"application/vnd.ms-excel");
+     if(window.reportIO&&window.reportIO.saveXlsx){
+       const r=await window.reportIO.saveXlsx(reportPayload());
+       if(!r.ok&&!r.canceled)alert("Could not save the file: "+(r.error||"unknown error"));
+     }else{
+       const html="<html xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body>"+buildHTML(false)+"</body></html>";
+       download(reportPayload().fileBase+".xls",html,"application/vnd.ms-excel");
+     }
    }catch(e){alert("Download Excel failed: "+e.message);}
  }
  async function copyRep(){

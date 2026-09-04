@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("attachments", {
 });
 
 contextBridge.exposeInMainWorld("reportIO", {
-  save: (ctx) => ipcRenderer.invoke("report:save", ctx),
+  saveDocx: (ctx) => ipcRenderer.invoke("report:saveDocx", ctx),
+  saveXlsx: (ctx) => ipcRenderer.invoke("report:saveXlsx", ctx),
   copyHtml: (ctx) => ipcRenderer.invoke("report:copyHtml", ctx),
 });

@@ -8,6 +8,24 @@ const XLSX = require("xlsx");
 const mammoth = require("mammoth");
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const WordExtractor = require("word-extractor");
+const {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  ShadingType,
+  BorderStyle,
+  AlignmentType,
+} = require("docx");
+
+// Light-only palette for exported Word/Excel reports (no blue, nothing dark).
+const DOCX_CREAM = "FBF6EC";
+const DOCX_INK = "3A3A3A";
+const DOCX_RULE = "D9CBB8";
 
 const PRODUCT_NAME = "MCL Audit Report Builder";
 const MAX_EXTRACT_CHARS = 20000;
@@ -163,13 +181,128 @@ ipcMain.handle("attachments:remove", async (event, relPath) => {
 // Saves report content via a native Save dialog (defaulting to the
 // Downloads folder) instead of the browser blob/anchor download path,
 // which is unreliable to trigger from a packaged Electron app.
-ipcMain.handle("report:save", async (event, ctx) => {
-  const { suggestedName, content } = ctx || {};
+function docxHeaderCell(text, width) {
+  return new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    shading: { type: ShadingType.CLEAR, fill: DOCX_CREAM },
+    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    children: [new Paragraph({ children: [new TextRun({ text, bold: true, size: 18, color: DOCX_INK })] })],
+  });
+}
+function docxCell(text, width) {
+  return new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    children: [new Paragraph({ spacing: { line: 260 }, children: [new TextRun({ text: text || "", size: 18, color: DOCX_INK })] })],
+  });
+}
+function docxTable(headers, widths, rows) {
+  return new Table({
+    width: { size: widths.reduce((a, b) => a + b, 0), type: WidthType.DXA },
+    columnWidths: widths,
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+      left: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+      right: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+    },
+    rows: [
+      new TableRow({ tableHeader: true, children: headers.map((h, i) => docxHeaderCell(h, widths[i])) }),
+      ...rows.map((r) => new TableRow({ children: r.map((c, i) => docxCell(c, widths[i])) })),
+    ],
+  });
+}
+
+function buildReportDocx({ area, periodLabel, coverage, thematic }) {
+  const coverageWidths = [900, 3000, 3000, 2450];
+  const thematicWidths = [500, 2400, 2150, 2150, 2150];
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            size: { width: 11906, height: 16838 },
+            margin: { top: 720, bottom: 720, left: 720, right: 720 },
+          },
+        },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 40 },
+            children: [new TextRun({ text: "C K PRUSTY & ASSOCIATES, Chartered Accountants", bold: true, size: 26, color: DOCX_INK })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 240 },
+            children: [new TextRun({ text: "Internal Audit — " + area + ", MCL · " + periodLabel, size: 20, color: DOCX_INK })],
+          }),
+          new Paragraph({
+            spacing: { before: 120, after: 120 },
+            children: [new TextRun({ text: "A. Scope-Coverage Statement", bold: true, size: 24, color: DOCX_INK })],
+          }),
+          docxTable(["Sl No", "Scope of Work", "Observation", "Management Reply"], coverageWidths, coverage.map((r) => [r.ref, r.title, r.observation, r.reply])),
+          new Paragraph({
+            spacing: { before: 240, after: 120 },
+            children: [new TextRun({ text: "B. Report of Exception — 25 Points", bold: true, size: 24, color: DOCX_INK })],
+          }),
+          docxTable(["Sl", "Description", "Problem", "Auditor's Comment", "Management Comment"], thematicWidths, thematic.map((r) => [r.ref, r.desc, r.prob, r.aud, r.mgmt])),
+          new Paragraph({
+            spacing: { before: 240 },
+            border: { top: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE, space: 4 } },
+            children: [
+              new TextRun({
+                text: "Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.",
+                italics: true,
+                size: 16,
+                color: DOCX_INK,
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  });
+  return Packer.toBuffer(doc);
+}
+
+function buildReportXlsx({ area, periodLabel, coverage, thematic }) {
+  const wb = XLSX.utils.book_new();
+
+  const coverageHeader = ["Sl No", "Scope of Work", "Observation", "Management Reply"];
+  const coverageAoa = [
+    ["C K PRUSTY & ASSOCIATES, Chartered Accountants"],
+    ["Internal Audit — " + area + ", MCL · " + periodLabel],
+    [],
+    coverageHeader,
+    ...coverage.map((r) => [r.ref, r.title, r.observation, r.reply]),
+  ];
+  const wsCoverage = XLSX.utils.aoa_to_sheet(coverageAoa);
+  wsCoverage["!cols"] = [{ wch: 12 }, { wch: 45 }, { wch: 45 }, { wch: 35 }];
+  XLSX.utils.book_append_sheet(wb, wsCoverage, "Scope Coverage");
+
+  const thematicHeader = ["Sl", "Description", "Problem", "Auditor's Comment", "Management Comment"];
+  const thematicAoa = [
+    ["C K PRUSTY & ASSOCIATES, Chartered Accountants"],
+    ["Internal Audit — " + area + ", MCL · " + periodLabel],
+    [],
+    thematicHeader,
+    ...thematic.map((r) => [r.ref, r.desc, r.prob, r.aud, r.mgmt]),
+  ];
+  const wsThematic = XLSX.utils.aoa_to_sheet(thematicAoa);
+  wsThematic["!cols"] = [{ wch: 8 }, { wch: 35 }, { wch: 35 }, { wch: 35 }, { wch: 35 }];
+  XLSX.utils.book_append_sheet(wb, wsThematic, "25-Point Exceptions");
+
+  return XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+}
+
+async function saveReportFile(event, ctx, ext, buildBuffer) {
   const parentWin = BrowserWindow.fromWebContents(event.sender);
-  const ext = (path.extname(suggestedName || "") || ".txt").replace(".", "");
+  const fileBase = (ctx && ctx.fileBase) || "Report";
   const result = await dialog.showSaveDialog(parentWin, {
     title: "Save report",
-    defaultPath: path.join(app.getPath("downloads"), suggestedName || "report." + ext),
+    defaultPath: path.join(app.getPath("downloads"), fileBase + "." + ext),
     filters: [
       { name: ext.toUpperCase() + " file", extensions: [ext] },
       { name: "All Files", extensions: ["*"] },
@@ -177,12 +310,16 @@ ipcMain.handle("report:save", async (event, ctx) => {
   });
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
   try {
-    await fsp.writeFile(result.filePath, content, "utf8");
+    const buffer = await buildBuffer(ctx);
+    await fsp.writeFile(result.filePath, buffer);
     return { ok: true, filePath: result.filePath };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
-});
+}
+
+ipcMain.handle("report:saveDocx", (event, ctx) => saveReportFile(event, ctx, "docx", buildReportDocx));
+ipcMain.handle("report:saveXlsx", (event, ctx) => saveReportFile(event, ctx, "xlsx", buildReportXlsx));
 
 // Writes both HTML and plain-text clipboard formats via Electron's
 // clipboard module, so pasting into Word/Excel/Outlook keeps the table
