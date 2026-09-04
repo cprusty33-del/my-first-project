@@ -5,3 +5,8 @@ contextBridge.exposeInMainWorld("attachments", {
   open: (relPath) => ipcRenderer.invoke("attachments:open", relPath),
   remove: (relPath) => ipcRenderer.invoke("attachments:remove", relPath),
 });
+
+contextBridge.exposeInMainWorld("reportIO", {
+  save: (ctx) => ipcRenderer.invoke("report:save", ctx),
+  copyHtml: (ctx) => ipcRenderer.invoke("report:copyHtml", ctx),
+});

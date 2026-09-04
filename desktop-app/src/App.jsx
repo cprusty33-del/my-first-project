@@ -131,9 +131,38 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
    h+="</table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
    return h;
  }
- function dlWord(){const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'></head><body>"+buildHTML(true)+"</body></html>";download("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".doc",html,"application/msword");}
- function dlExcel(){const html="<html xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body>"+buildHTML(false)+"</body></html>";download("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".xls",html,"application/vnd.ms-excel");}
- function copyRep(){const el=document.getElementById("rep");const r=document.createRange();r.selectNode(el);const s=window.getSelection();s.removeAllRanges();s.addRange(r);try{document.execCommand("copy");}catch(e){}s.removeAllRanges();}
+ async function saveOrDownload(name,html,mime){
+   if(window.reportIO){
+     const r=await window.reportIO.save({suggestedName:name,content:html,mime});
+     if(!r.ok&&!r.canceled)alert("Could not save the file: "+(r.error||"unknown error"));
+   }else{
+     download(name,html,mime);
+   }
+ }
+ async function dlWord(){
+   try{
+     const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'></head><body>"+buildHTML(true)+"</body></html>";
+     await saveOrDownload("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".doc",html,"application/msword");
+   }catch(e){alert("Download Word failed: "+e.message);}
+ }
+ async function dlExcel(){
+   try{
+     const html="<html xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body>"+buildHTML(false)+"</body></html>";
+     await saveOrDownload("Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"")+".xls",html,"application/vnd.ms-excel");
+   }catch(e){alert("Download Excel failed: "+e.message);}
+ }
+ async function copyRep(){
+   try{
+     const el=document.getElementById("rep");
+     const text=el?el.innerText:"";
+     if(window.reportIO){
+       const r=await window.reportIO.copyHtml({html:buildHTML(false),text});
+       if(!r.ok)alert("Copy failed: "+(r.error||"unknown error"));
+     }else{
+       const r=document.createRange();r.selectNode(el);const s=window.getSelection();s.removeAllRanges();s.addRange(r);try{document.execCommand("copy");}catch(e){}s.removeAllRanges();
+     }
+   }catch(e){alert("Copy failed: "+e.message);}
+ }
  return(<div>
    <div className="flex flex-wrap gap-2 mb-3 print:hidden">
      <button onClick={()=>window.print()} className="px-3 py-1.5 rounded bg-[#1F3864] text-white text-sm font-semibold">Print / PDF</button>

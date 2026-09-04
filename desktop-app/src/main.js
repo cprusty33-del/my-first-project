@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, clipboard } = require("electron");
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
@@ -154,6 +154,44 @@ ipcMain.handle("attachments:remove", async (event, relPath) => {
   const full = resolveAttachmentPath(relPath);
   try {
     await fsp.unlink(full);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Saves report content via a native Save dialog (defaulting to the
+// Downloads folder) instead of the browser blob/anchor download path,
+// which is unreliable to trigger from a packaged Electron app.
+ipcMain.handle("report:save", async (event, ctx) => {
+  const { suggestedName, content } = ctx || {};
+  const parentWin = BrowserWindow.fromWebContents(event.sender);
+  const ext = (path.extname(suggestedName || "") || ".txt").replace(".", "");
+  const result = await dialog.showSaveDialog(parentWin, {
+    title: "Save report",
+    defaultPath: path.join(app.getPath("downloads"), suggestedName || "report." + ext),
+    filters: [
+      { name: ext.toUpperCase() + " file", extensions: [ext] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+  try {
+    await fsp.writeFile(result.filePath, content, "utf8");
+    return { ok: true, filePath: result.filePath };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Writes both HTML and plain-text clipboard formats via Electron's
+// clipboard module, so pasting into Word/Excel/Outlook keeps the table
+// structure (document.execCommand("copy") is deprecated and unreliable
+// in newer Electron/Chromium).
+ipcMain.handle("report:copyHtml", async (event, ctx) => {
+  const { html, text } = ctx || {};
+  try {
+    clipboard.write({ html: html || "", text: text || "" });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
