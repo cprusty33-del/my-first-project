@@ -82,6 +82,28 @@ export default function App(){
    }
    alert(msg);
  }
+ async function clearAllAttachments(){
+   const removals=[];
+   Object.entries(data.scope).forEach(([ref,e])=>{(e&&e.files||[]).forEach(f=>removals.push({ref,relPath:f.relPath,name:f.name}));});
+   if(!removals.length){alert("No attachments to clear for "+area+" / "+period.label+".");return;}
+   const pointCount=Object.values(data.scope).filter(e=>e&&e.files&&e.files.length).length;
+   if(!window.confirm("Remove all "+removals.length+" attached file(s) across "+pointCount+" Scope Coverage point(s) for "+area+" / "+period.label+"?\n\nThis deletes the files and the text they added to Observation, but keeps anything you typed yourself. This cannot be undone."))return;
+   if(window.attachments){
+     await Promise.all(removals.map(r=>window.attachments.remove(r.relPath).catch(()=>{})));
+   }
+   setData(d=>{
+     const scope={...d.scope};
+     Object.keys(scope).forEach(ref=>{
+       const cur=scope[ref];
+       if(!cur||!cur.files||!cur.files.length)return;
+       let obs=cur.obs||"";
+       cur.files.forEach(f=>{obs=removeExtractedBlock(obs,f.name);});
+       scope[ref]={...cur,files:[],obs};
+     });
+     return{...d,scope};
+   });
+   alert("Removed "+removals.length+" file(s) across "+pointCount+" point(s).");
+ }
  async function removeFileAt(kind,ref,idx,relPath){
    if(window.attachments)await window.attachments.remove(relPath);
    if(kind==="scope"){
@@ -117,6 +139,7 @@ export default function App(){
    {tab==="scope"&&(<div className="overflow-x-auto">
        <div className="flex items-center gap-2 mb-2">
          <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel)</button>
+         <button type="button" onClick={clearAllAttachments} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🗑️ Clear All Attachments</button>
          <span className="text-[10px] text-slate-400">Select one or more Excel annexures — sheets named after a point (e.g. "1.1.2a") are matched automatically.</span>
        </div>
        {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
