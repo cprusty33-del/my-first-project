@@ -36,7 +36,9 @@ function resolveAttachmentPath(relPath) {
 
 ipcMain.handle("attachments:add", async (event, ctx) => {
   const { area, period, ref } = ctx || {};
-  const result = await dialog.showOpenDialog({
+  const parentWin = BrowserWindow.fromWebContents(event.sender);
+  if (parentWin) parentWin.focus();
+  const result = await dialog.showOpenDialog(parentWin, {
     title: "Select supporting files (PDF, Word, Excel)",
     properties: ["openFile", "multiSelections"],
     filters: [
