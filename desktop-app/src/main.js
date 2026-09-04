@@ -65,11 +65,7 @@ function capText(text) {
   return trimmed.slice(0, MAX_EXTRACT_CHARS) + "\n… (truncated, file is longer)";
 }
 
-function extractExcelText(fullPath) {
-  const wb = XLSX.readFile(fullPath);
-  const sheetName = wb.SheetNames[0];
-  if (!sheetName) return "";
-  const sheet = wb.Sheets[sheetName];
+function sheetToText(sheet) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
   const lines = [];
   for (const row of rows) {
@@ -77,6 +73,43 @@ function extractExcelText(fullPath) {
     if (cells.length) lines.push(cells.join("  |  "));
   }
   return lines.join("\n");
+}
+
+function extractExcelText(fullPath) {
+  const wb = XLSX.readFile(fullPath);
+  const sheetName = wb.SheetNames[0];
+  if (!sheetName) return "";
+  return sheetToText(wb.Sheets[sheetName]);
+}
+
+// Strips everything but letters/digits and lowercases, so "1.1.2. (a)" and
+// "1.1.2a" compare equal when matching an annexure sheet name to a scope ref.
+function normalizeRef(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Copies a source file into a per-point attachment directory, avoiding name
+// collisions, and returns its metadata (without extracted text).
+async function copyIntoAttachmentDir(area, period, ref, srcPath) {
+  const dir = path.join(attachmentsRoot(), sanitizeSegment(area), sanitizeSegment(period), sanitizeSegment(ref));
+  await fsp.mkdir(dir, { recursive: true });
+  const base = path.basename(srcPath);
+  const ext = path.extname(base);
+  const stem = path.basename(base, ext);
+  let dest = path.join(dir, base);
+  let i = 1;
+  while (fs.existsSync(dest)) {
+    dest = path.join(dir, `${stem} (${i})${ext}`);
+    i++;
+  }
+  await fsp.copyFile(srcPath, dest);
+  const stat = await fsp.stat(dest);
+  return {
+    name: path.basename(dest),
+    relPath: path.relative(attachmentsRoot(), dest),
+    size: stat.size,
+    addedAt: new Date().toISOString(),
+  };
 }
 
 async function extractDocxText(fullPath) {
@@ -134,32 +167,78 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
   });
   if (result.canceled || !result.filePaths.length) return [];
 
-  const dir = path.join(attachmentsRoot(), sanitizeSegment(area), sanitizeSegment(period), sanitizeSegment(ref));
-  await fsp.mkdir(dir, { recursive: true });
-
   const added = [];
   for (const srcPath of result.filePaths) {
-    const base = path.basename(srcPath);
-    const ext = path.extname(base);
-    const stem = path.basename(base, ext);
-    let dest = path.join(dir, base);
-    let i = 1;
-    while (fs.existsSync(dest)) {
-      dest = path.join(dir, `${stem} (${i})${ext}`);
-      i++;
-    }
-    await fsp.copyFile(srcPath, dest);
-    const stat = await fsp.stat(dest);
-    const text = await extractText(dest);
-    added.push({
-      name: path.basename(dest),
-      relPath: path.relative(attachmentsRoot(), dest),
-      size: stat.size,
-      addedAt: new Date().toISOString(),
-      text,
-    });
+    const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
+    const full = resolveAttachmentPath(meta.relPath);
+    const text = await extractText(full);
+    added.push({ ...meta, text });
   }
   return added;
+});
+
+// Bulk-loads a batch of Excel annexure workbooks (like MCL's per-section
+// annexures, one sheet per audit point) and auto-distributes each sheet's
+// content to the scope point whose ref matches that sheet's name — e.g. a
+// sheet named "1.1.2a OC Coal Deptl" matches ref "1.1.2. (a)". Only exact
+// normalized-ref matches are used; anything that doesn't match a ref in the
+// current coverage list is reported back as unmatched rather than guessed.
+ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
+  const { area, period, refs } = ctx || {};
+  const parentWin = BrowserWindow.fromWebContents(event.sender);
+  if (parentWin) parentWin.focus();
+  const result = await dialog.showOpenDialog(parentWin, {
+    title: "Select Excel annexure files (one sheet per audit point)",
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Excel files", extensions: ["xlsx", "xls", "xlsm"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths.length) return { byRef: {}, unmatched: [], filesProcessed: 0 };
+
+  const refByNorm = new Map();
+  for (const ref of refs || []) {
+    const norm = normalizeRef(ref);
+    if (!norm) continue;
+    if (!refByNorm.has(norm)) refByNorm.set(norm, []);
+    refByNorm.get(norm).push(ref);
+  }
+
+  const byRef = {};
+  const unmatched = [];
+  for (const srcPath of result.filePaths) {
+    const fileBase = path.basename(srcPath);
+    let wb;
+    try {
+      wb = XLSX.readFile(srcPath);
+    } catch (e) {
+      unmatched.push({ file: fileBase, sheet: null, reason: "could not open file: " + String(e) });
+      continue;
+    }
+    for (const sheetName of wb.SheetNames) {
+      if (/^index$/i.test(sheetName.trim())) continue;
+      const leadingToken = sheetName.trim().split(/\s+/)[0];
+      if (!/^\d/.test(leadingToken)) {
+        unmatched.push({ file: fileBase, sheet: sheetName, reason: "sheet name doesn't start with a point number" });
+        continue;
+      }
+      const norm = normalizeRef(leadingToken);
+      const matchedRefs = refByNorm.get(norm);
+      if (!matchedRefs || !matchedRefs.length) {
+        unmatched.push({ file: fileBase, sheet: sheetName, reason: "no scope point matches \"" + leadingToken + "\"" });
+        continue;
+      }
+      const text = capText(sheetToText(wb.Sheets[sheetName]));
+      for (const ref of matchedRefs) {
+        const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
+        const record = { ...meta, name: fileBase + " — " + sheetName, text };
+        if (!byRef[ref]) byRef[ref] = [];
+        byRef[ref].push(record);
+      }
+    }
+  }
+  return { byRef, unmatched, filesProcessed: result.filePaths.length };
 });
 
 ipcMain.handle("attachments:open", async (event, relPath) => {

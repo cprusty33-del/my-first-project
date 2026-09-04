@@ -47,9 +47,7 @@ export default function App(){
  function reasonFor(freq){return freq==="Q"?"This is a quarterly check — reported at quarter-end.":freq==="A"?"This is an annual check — reported at year-end.":"";}
  function setScope(ref,f,v){setData(d=>({...d,scope:{...d.scope,[ref]:{...(d.scope[ref]||{}),[f]:v}}}));}
  function setThem(ref,f,v){setData(d=>({...d,them:{...d.them,[ref]:{...(d.them[ref]||{}),[f]:v}}}));}
- async function addFiles(kind,ref){
-   if(!window.attachments)return;
-   const added=await window.attachments.add({area,period:pid,ref});
+ function applyAddedFiles(kind,ref,added){
    if(!added||!added.length)return;
    const block=added.filter(f=>f.text).map(f=>"--- From "+f.name+" ---\n"+f.text).join("\n\n");
    const append=(existing)=>block?(existing?existing+"\n\n"+block:block):existing;
@@ -58,6 +56,27 @@ export default function App(){
    }else{
      setData(d=>{const cur=d.them[ref]||{};const files=[...(cur.files||[]),...added];return{...d,them:{...d.them,[ref]:{...cur,files,prob:append(cur.prob||"")}}};});
    }
+ }
+ async function addFiles(kind,ref){
+   if(!window.attachments)return;
+   const added=await window.attachments.add({area,period:pid,ref});
+   applyAddedFiles(kind,ref,added);
+ }
+ async function bulkLoadAnnexures(){
+   if(!window.attachments||!window.attachments.bulkAdd)return;
+   const refs=coverage.map(([ref])=>ref);
+   const result=await window.attachments.bulkAdd({area,period:pid,refs});
+   if(!result)return;
+   const byRef=result.byRef||{};
+   const matchedRefs=Object.keys(byRef);
+   matchedRefs.forEach(ref=>applyAddedFiles("scope",ref,byRef[ref]));
+   const unmatched=result.unmatched||[];
+   let msg="Matched "+matchedRefs.length+" scope point(s) across "+(result.filesProcessed||0)+" file(s).";
+   if(unmatched.length){
+     msg+="\n\n"+unmatched.length+" sheet(s) could not be matched and were skipped:\n"+unmatched.slice(0,20).map(u=>"• "+u.file+(u.sheet?" ["+u.sheet+"]":"")+" — "+u.reason).join("\n");
+     if(unmatched.length>20)msg+="\n… and "+(unmatched.length-20)+" more.";
+   }
+   alert(msg);
  }
  async function removeFileAt(kind,ref,idx,relPath){
    if(window.attachments)await window.attachments.remove(relPath);
@@ -91,7 +110,12 @@ export default function App(){
        <Card n={counts.total} t="Scope points" c="#1F3864"/><Card n={counts.cov} t="Covered" c="#2f7d3a"/><Card n={counts.exc} t="Exceptions" c="#C00000"/><Card n={counts.nd} t="Not due (this period)" c="#B8860B"/>
        <div className="col-span-2 md:col-span-4 text-sm text-slate-600 mt-2"><b>How to use:</b> choose Area and Period. In <b>Scope Coverage</b> mark each point and write the Observation &amp; Management Reply. In <b>25-Point Exceptions</b> fill the summary. Open <b>Report &amp; Export</b> to print or download Word/Excel. Saved automatically on this computer; stays here next time.
        <div className="mt-2 text-xs text-slate-500">This app tracks findings and builds the report tables. It does not read your Excel annexures — keep filling those in separately.</div></div></div>)}
-   {tab==="scope"&&(<div className="overflow-x-auto">{area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
+   {tab==="scope"&&(<div className="overflow-x-auto">
+       <div className="flex items-center gap-2 mb-2">
+         <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel)</button>
+         <span className="text-[10px] text-slate-400">Select one or more Excel annexures — sheets named after a point (e.g. "1.1.2a") are matched automatically.</span>
+       </div>
+       {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
        <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
          {coverage.map(([ref,title,sec,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);const nd=st.startsWith("Not due");
            return(<tr key={ref} className={"border-b align-top "+(st==="EXCEPTION"?"bg-red-50":nd?"bg-amber-50":"")}>
