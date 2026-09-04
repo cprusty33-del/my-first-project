@@ -195,13 +195,25 @@ function FileCell({files,disabled,onAdd,onRemove,onOpen}){
 
 function Report({area,period,data,coverage,autoStatus,reasonFor}){
  function obsText(ref,freq){const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(e.obs)return e.obs;if(st==="No exception noted")return "No exception noted";if(st.startsWith("Not due"))return st+" — "+reasonFor(freq);if(st==="N/A")return "Not applicable";if(st==="EXCEPTION")return "(exception — enter observation)";return "";}
+ function tablesFor(key){return((data.scope[key]||{}).files||[]).filter(f=>f.table&&f.table.headers&&f.table.headers.length&&f.table.rows&&f.table.rows.length).map(f=>({...f.table,fileName:f.name}));}
+ function nestedTableHTML(t){
+   let s="<div style='margin-top:4px'><i style='font-size:9px'>Source data"+(t.fileName?(" — "+esc(t.fileName)):"")+":</i>";
+   s+="<table style='border-collapse:collapse;width:100%;margin-top:2px'><tr>"+t.headers.map(h=>"<th style='border:1px solid #999;padding:2px;background:#FBF6EC;font-size:9px;text-align:left'>"+esc(h)+"</th>").join("")+"</tr>";
+   t.rows.forEach(r=>{s+="<tr>"+r.map(v=>"<td style='border:1px solid #ccc;padding:2px;font-size:9px'>"+esc(v)+"</td>").join("")+"</tr>";});
+   s+="</table></div>";
+   return s;
+ }
+ function obsCellHTML(key,freq){
+   const text=esc(obsText(key,freq)).replace(/\n/g,"<br/>");
+   return text+tablesFor(key).map(nestedTableHTML).join("");
+ }
  function buildHTML(forWord){
    const th="border:1px solid #444;padding:4px;background:#1F3864;color:#fff;text-align:left;font-size:11px";
    const td="border:1px solid #999;padding:4px;font-size:11px;vertical-align:top;white-space:pre-line";
    let h="<div style='font-family:Georgia,serif'>";
    h+="<div style='text-align:center'><b>C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</b><br>Internal Audit — "+esc(area)+", MCL &middot; "+esc(period.plabel)+"</div>";
    h+="<h3 style='color:#1F3864'>A. Scope-Coverage Statement</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl No</th><th style='"+th+"'>Scope of Work</th><th style='"+th+"'>Observation</th><th style='"+th+"'>Management Reply</th></tr>";
-   coverage.forEach(([ref,title,,freq,key])=>{h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(title)+"</td><td style='"+td+"'>"+esc(obsText(key,freq))+"</td><td style='"+td+"'>"+esc((data.scope[key]||{}).reply||"")+"</td></tr>";});
+   coverage.forEach(([ref,title,,freq,key])=>{h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(title)+"</td><td style='"+td+"'>"+obsCellHTML(key,freq)+"</td><td style='"+td+"'>"+esc((data.scope[key]||{}).reply||"")+"</td></tr>";});
    h+="</table><h3 style='color:#1F3864'>B. Report of Exception — 25 Points</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl</th><th style='"+th+"'>Description</th><th style='"+th+"'>Problem</th><th style='"+th+"'>Auditor's Comment</th><th style='"+th+"'>Management Comment</th></tr>";
    THEMATIC.forEach(([ref,desc])=>{const e=data.them[ref]||{};h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(desc)+"</td><td style='"+td+"'>"+esc(e.prob||"")+"</td><td style='"+td+"'>"+esc(e.aud||"No exception noted")+"</td><td style='"+td+"'>"+esc(e.mgmt||"")+"</td></tr>";});
    h+="</table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
@@ -209,7 +221,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  }
  function reportPayload(){
    const fileBase="Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"");
-   const coverageRows=coverage.map(([ref,title,,freq,key])=>({ref,title,observation:obsText(key,freq),reply:(data.scope[key]||{}).reply||""}));
+   const coverageRows=coverage.map(([ref,title,,freq,key])=>({ref,title,observation:obsText(key,freq),reply:(data.scope[key]||{}).reply||"",tables:tablesFor(key)}));
    const thematicRows=THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return{ref,desc,prob:e.prob||"",aud:e.aud||"No exception noted",mgmt:e.mgmt||""};});
    return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows};
  }
@@ -258,7 +270,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
      <div className="text-center mb-1"><div className="font-bold text-sm">C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</div><div>Internal Audit — {area}, MCL · {period.plabel}</div></div>
      <h3 className="font-bold text-[#1F3864] mt-3 mb-1">A. Scope-Coverage Statement</h3>
      <table className="w-full border-collapse mb-4"><thead><tr className="bg-slate-100"><th className="border p-1 w-16">Sl No</th><th className="border p-1 text-left">Scope of Work</th><th className="border p-1 text-left">Observation</th><th className="border p-1 text-left">Management Reply</th></tr></thead>
-       <tbody>{coverage.map(([ref,title,,freq,key])=><tr key={key}><td className="border p-1 font-mono">{ref}</td><td className="border p-1">{title}</td><td className="border p-1 whitespace-pre-line">{obsText(key,freq)}</td><td className="border p-1 whitespace-pre-line">{(data.scope[key]||{}).reply||""}</td></tr>)}</tbody></table>
+       <tbody>{coverage.map(([ref,title,,freq,key])=><tr key={key}><td className="border p-1 font-mono">{ref}</td><td className="border p-1">{title}</td><td className="border p-1" dangerouslySetInnerHTML={{__html:obsCellHTML(key,freq)}}/><td className="border p-1 whitespace-pre-line">{(data.scope[key]||{}).reply||""}</td></tr>)}</tbody></table>
      <h3 className="font-bold text-[#1F3864] mt-3 mb-1">B. Report of Exception — 25 Points</h3>
      <table className="w-full border-collapse"><thead><tr className="bg-slate-100"><th className="border p-1 w-10">Sl</th><th className="border p-1 text-left">Description</th><th className="border p-1 text-left">Problem</th><th className="border p-1 text-left">Auditor's Comment</th><th className="border p-1 text-left">Management Comment</th></tr></thead>
        <tbody>{THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return <tr key={ref}><td className="border p-1">{ref}</td><td className="border p-1">{desc}</td><td className="border p-1 whitespace-pre-line">{e.prob||""}</td><td className="border p-1 whitespace-pre-line">{e.aud||"No exception noted"}</td><td className="border p-1 whitespace-pre-line">{e.mgmt||""}</td></tr>;})}</tbody></table>

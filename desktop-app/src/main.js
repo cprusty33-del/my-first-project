@@ -20,6 +20,7 @@ const {
   ShadingType,
   BorderStyle,
   AlignmentType,
+  PageOrientation,
 } = require("docx");
 
 // Light-only palette for exported Word/Excel reports (no blue, nothing dark).
@@ -103,8 +104,20 @@ function sheetToObservationText(sheet) {
   if (headerIdx === -1) return null;
   const remarksCol = headerRow.findIndex((h) => String(h || "").trim().toLowerCase() === "remarks");
 
+  // Fixed column set (used for the columnar table) — every non-blank header
+  // except Sl and Exception, in their original sheet order.
+  const columns = [];
+  for (let c = 0; c < headerRow.length; c++) {
+    if (c === exceptionCol) continue;
+    const label = String(headerRow[c] || "").trim();
+    if (!label || label.toLowerCase() === "sl") continue;
+    columns.push({ c, label });
+  }
+  const formatVal = (val) => (val instanceof Date ? val.toLocaleDateString() : String(val == null ? "" : val).trim());
+
   let anyException = false;
   const sentences = [];
+  const tableRows = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row.some((c) => String(c == null ? "" : c).trim() !== "")) continue;
@@ -115,35 +128,30 @@ function sheetToObservationText(sheet) {
     const remark = remarksCol !== -1 ? String(row[remarksCol] == null ? "" : row[remarksCol]).trim() : "";
     if (flag === "EXCEPTION") anyException = true;
     if (flag !== "EXCEPTION" && !remark) continue;
-    const parts = [];
-    for (let c = 0; c < headerRow.length; c++) {
-      if (c === exceptionCol) continue;
-      const label = String(headerRow[c] || "").trim();
-      if (!label || label.toLowerCase() === "sl") continue;
-      const val = row[c];
-      const valStr = val instanceof Date ? val.toLocaleDateString() : String(val == null ? "" : val).trim();
-      if (!valStr) continue;
-      parts.push(label + ": " + valStr);
-    }
+    const cells = columns.map(({ c }) => formatVal(row[c]));
+    if (cells.every((v) => !v)) continue;
+    tableRows.push(cells);
+    const parts = columns.map(({ label }, idx) => (cells[idx] ? label + ": " + cells[idx] : null)).filter(Boolean);
     if (parts.length) sentences.push(parts.join("\n"));
   }
 
   if (!sentences.length) {
-    return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure sheet.", hasException: false };
+    return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure sheet.", hasException: false, table: null };
   }
   return {
     text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => "Item " + (i + 1) + ":\n" + s).join("\n\n"),
     hasException: anyException,
+    table: { headers: columns.map((c) => c.label), rows: tableRows },
   };
 }
 
 function extractExcelText(fullPath) {
   const wb = XLSX.readFile(fullPath);
   const sheetName = wb.SheetNames[0];
-  if (!sheetName) return { text: "", hasException: false };
+  if (!sheetName) return { text: "", hasException: false, table: null };
   const sheet = wb.Sheets[sheetName];
   const obs = sheetToObservationText(sheet);
-  return obs || { text: sheetToText(sheet), hasException: false };
+  return obs || { text: sheetToText(sheet), hasException: false, table: null };
 }
 
 // Strips spacing/parentheses and folds a trailing ". (a)"-style suffix into
@@ -207,17 +215,17 @@ async function extractText(fullPath) {
   const ext = path.extname(fullPath).toLowerCase();
   try {
     if ([".xlsx", ".xls", ".xlsm", ".csv"].includes(ext)) {
-      const { text, hasException } = extractExcelText(fullPath);
-      return text ? { text: capText(text), hasException } : null;
+      const { text, hasException, table } = extractExcelText(fullPath);
+      return text ? { text: capText(text), hasException, table } : null;
     } else if (ext === ".docx") {
       const text = await extractDocxText(fullPath);
-      return text ? { text: capText(text), hasException: false } : null;
+      return text ? { text: capText(text), hasException: false, table: null } : null;
     } else if (ext === ".doc") {
       const text = await extractDocText(fullPath);
-      return text ? { text: capText(text), hasException: false } : null;
+      return text ? { text: capText(text), hasException: false, table: null } : null;
     } else if (ext === ".pdf") {
       const text = await extractPdfText(fullPath);
-      return text ? { text: capText(text), hasException: false } : null;
+      return text ? { text: capText(text), hasException: false, table: null } : null;
     }
     return null;
   } catch (e) {
@@ -244,7 +252,7 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
     const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
     const full = resolveAttachmentPath(meta.relPath);
     const extracted = await extractText(full);
-    added.push({ ...meta, text: extracted ? extracted.text : null, hasException: extracted ? extracted.hasException : false });
+    added.push({ ...meta, text: extracted ? extracted.text : null, hasException: extracted ? extracted.hasException : false, table: extracted ? extracted.table : null });
   }
   return added;
 });
@@ -305,9 +313,10 @@ ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
       const obs = sheetToObservationText(sheet);
       const text = capText(obs ? obs.text : sheetToText(sheet));
       const hasException = obs ? obs.hasException : false;
+      const table = obs ? obs.table : null;
       for (const ref of matchedRefs) {
         const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
-        const record = { ...meta, name: fileBase + " — " + sheetName, text, hasException };
+        const record = { ...meta, name: fileBase + " — " + sheetName, text, hasException, table };
         if (!byRef[ref]) byRef[ref] = [];
         byRef[ref].push(record);
       }
@@ -355,18 +364,20 @@ function docxCell(text, width) {
     ),
   });
 }
+const TABLE_BORDERS = {
+  top: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+  left: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+  right: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+  insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+  insideVertical: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
+};
+
 function docxTable(headers, widths, rows) {
   return new Table({
     width: { size: widths.reduce((a, b) => a + b, 0), type: WidthType.DXA },
     columnWidths: widths,
-    borders: {
-      top: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-      bottom: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-      left: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-      right: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: DOCX_RULE },
-    },
+    borders: TABLE_BORDERS,
     rows: [
       new TableRow({ tableHeader: true, children: headers.map((h, i) => docxHeaderCell(h, widths[i])) }),
       ...rows.map((r) => new TableRow({ children: r.map((c, i) => docxCell(c, widths[i])) })),
@@ -374,16 +385,84 @@ function docxTable(headers, widths, rows) {
   });
 }
 
+// A small side-by-side (columnar) table nested inside the Observation cell,
+// one row per annexure line item, columns matching that annexure sheet's
+// own headers — for when a flat "field: value" list is harder to scan than
+// an actual grid.
+function docxNestedTable(table, totalWidth) {
+  const n = table.headers.length;
+  if (!n) return null;
+  const colWidth = Math.max(500, Math.floor(totalWidth / n));
+  const widths = table.headers.map(() => colWidth);
+  return new Table({
+    width: { size: colWidth * n, type: WidthType.DXA },
+    columnWidths: widths,
+    borders: TABLE_BORDERS,
+    rows: [
+      new TableRow({ tableHeader: true, children: table.headers.map((h, i) => docxHeaderCell(h, widths[i])) }),
+      ...table.rows.map((r) => new TableRow({ children: r.map((v, i) => docxCell(v, widths[i])) })),
+    ],
+  });
+}
+
+// Observation cell: the free-text wording first (still the primary, editable
+// content), then — when the row's attached files carried recognizable
+// annexure data — a "Source data" sub-table per file, laid out in real
+// columns instead of a flat list.
+function docxObservationCell(row, width) {
+  const lines = String(row.observation || "").split("\n");
+  const children = lines.map(
+    (line) => new Paragraph({ spacing: { line: 260 }, children: [new TextRun({ text: line, size: 18, color: DOCX_INK })] })
+  );
+  (row.tables || []).forEach((t) => {
+    if (!t || !t.headers || !t.headers.length || !t.rows.length) return;
+    children.push(
+      new Paragraph({
+        spacing: { before: 100, after: 40 },
+        children: [new TextRun({ text: "Source data:", italics: true, bold: true, size: 16, color: DOCX_INK })],
+      })
+    );
+    const nested = docxNestedTable(t, width - 200);
+    if (nested) children.push(nested);
+  });
+  if (!children.length) children.push(new Paragraph({ children: [new TextRun({ text: "", size: 18 })] }));
+  return new TableCell({ width: { size: width, type: WidthType.DXA }, margins: { top: 80, bottom: 80, left: 100, right: 100 }, children });
+}
+
 function buildReportDocx({ area, periodLabel, coverage, thematic }) {
-  const coverageWidths = [900, 3000, 3000, 2450];
+  // Landscape, so the Observation column has room for a real nested table
+  // (up to ~7 columns) instead of a cramped single narrow column.
+  const coverageWidths = [700, 2600, 8600, 2438];
   const thematicWidths = [500, 2400, 2150, 2150, 2150];
+  const coverageTable = new Table({
+    width: { size: coverageWidths.reduce((a, b) => a + b, 0), type: WidthType.DXA },
+    columnWidths: coverageWidths,
+    borders: TABLE_BORDERS,
+    rows: [
+      new TableRow({
+        tableHeader: true,
+        children: ["Sl No", "Scope of Work", "Observation", "Management Reply"].map((h, i) => docxHeaderCell(h, coverageWidths[i])),
+      }),
+      ...coverage.map(
+        (r) =>
+          new TableRow({
+            children: [
+              docxCell(r.ref, coverageWidths[0]),
+              docxCell(r.title, coverageWidths[1]),
+              docxObservationCell(r, coverageWidths[2]),
+              docxCell(r.reply, coverageWidths[3]),
+            ],
+          })
+      ),
+    ],
+  });
   const doc = new Document({
     sections: [
       {
         properties: {
           page: {
-            size: { width: 11906, height: 16838 },
-            margin: { top: 720, bottom: 720, left: 720, right: 720 },
+            size: { width: 11906, height: 16838, orientation: PageOrientation.LANDSCAPE },
+            margin: { top: 600, bottom: 600, left: 600, right: 600 },
           },
         },
         children: [
@@ -401,7 +480,7 @@ function buildReportDocx({ area, periodLabel, coverage, thematic }) {
             spacing: { before: 120, after: 120 },
             children: [new TextRun({ text: "A. Scope-Coverage Statement", bold: true, size: 24, color: DOCX_INK })],
           }),
-          docxTable(["Sl No", "Scope of Work", "Observation", "Management Reply"], coverageWidths, coverage.map((r) => [r.ref, r.title, r.observation, r.reply])),
+          coverageTable,
           new Paragraph({
             spacing: { before: 240, after: 120 },
             children: [new TextRun({ text: "B. Report of Exception — 25 Points", bold: true, size: 24, color: DOCX_INK })],
