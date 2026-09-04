@@ -34,6 +34,19 @@ export default function App(){
  function reasonFor(freq){return freq==="Q"?"This is a quarterly check — reported at quarter-end.":freq==="A"?"This is an annual check — reported at year-end.":"";}
  function setScope(ref,f,v){setData(d=>({...d,scope:{...d.scope,[ref]:{...(d.scope[ref]||{}),[f]:v}}}));}
  function setThem(ref,f,v){setData(d=>({...d,them:{...d.them,[ref]:{...(d.them[ref]||{}),[f]:v}}}));}
+ async function addFiles(kind,ref){
+   if(!window.attachments)return;
+   const added=await window.attachments.add({area,period:pid,ref});
+   if(!added||!added.length)return;
+   if(kind==="scope"){const cur=(data.scope[ref]||{}).files||[];setScope(ref,"files",[...cur,...added]);}
+   else{const cur=(data.them[ref]||{}).files||[];setThem(ref,"files",[...cur,...added]);}
+ }
+ async function removeFileAt(kind,ref,idx,relPath){
+   if(window.attachments)await window.attachments.remove(relPath);
+   if(kind==="scope"){const cur=(data.scope[ref]||{}).files||[];setScope(ref,"files",cur.filter((_,i)=>i!==idx));}
+   else{const cur=(data.them[ref]||{}).files||[];setThem(ref,"files",cur.filter((_,i)=>i!==idx));}
+ }
+ function openFile(relPath){if(window.attachments)window.attachments.open(relPath);}
  const counts=useMemo(()=>{let exc=0,cov=0,nd=0;coverage.forEach(([ref,,,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(st==="EXCEPTION")exc++;if(st&&!st.startsWith("Not due"))cov++;if(st.startsWith("Not due"))nd++;});return{total:coverage.length,exc,cov,nd};},[coverage,data,period]);
  const daysLeft=Math.ceil((period.due-new Date())/86400000);
  return (
@@ -58,21 +71,23 @@ export default function App(){
        <div className="col-span-2 md:col-span-4 text-sm text-slate-600 mt-2"><b>How to use:</b> choose Area and Period. In <b>Scope Coverage</b> mark each point and write the Observation &amp; Management Reply. In <b>25-Point Exceptions</b> fill the summary. Open <b>Report &amp; Export</b> to print or download Word/Excel. Saved automatically on this computer; stays here next time.
        <div className="mt-2 text-xs text-slate-500">This app tracks findings and builds the report tables. It does not read your Excel annexures — keep filling those in separately.</div></div></div>)}
    {tab==="scope"&&(<div className="overflow-x-auto">{area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
-       <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th></tr></thead><tbody>
+       <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
          {coverage.map(([ref,title,sec,freq])=>{const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);const nd=st.startsWith("Not due");
            return(<tr key={ref} className={"border-b align-top "+(st==="EXCEPTION"?"bg-red-50":nd?"bg-amber-50":"")}>
              <td className="p-2 font-mono font-bold text-slate-700">{ref}{freq!=="M"&&<span className="ml-1 text-[9px] px-1 rounded bg-slate-200 text-slate-600">{freq}</span>}</td>
              <td className="p-2">{title}<div className="text-[10px] text-slate-400">{sec}</div></td>
              <td className="p-2"><select value={st} onChange={ev=>setScope(ref,"status",ev.target.value)} className="border rounded px-1 py-1 w-full">{STATUSES.map(s=><option key={s} value={s}>{s||"— select —"}</option>)}</select>{nd&&<div className="text-[10px] text-amber-700 mt-1">{reasonFor(freq)}</div>}</td>
              <td className="p-2"><textarea value={e.obs||""} onChange={ev=>setScope(ref,"obs",ev.target.value)} rows={2} placeholder={st==="No exception noted"?"No exception noted":"observation…"} className="border rounded w-full p-1 text-xs"/></td>
-             <td className="p-2"><textarea value={e.reply||""} onChange={ev=>setScope(ref,"reply",ev.target.value)} rows={2} placeholder="management reply…" className="border rounded w-full p-1 text-xs"/></td></tr>);})}
+             <td className="p-2"><textarea value={e.reply||""} onChange={ev=>setScope(ref,"reply",ev.target.value)} rows={2} placeholder="management reply…" className="border rounded w-full p-1 text-xs"/></td>
+             <td className="p-2"><FileCell files={e.files} onAdd={()=>addFiles("scope",ref)} onRemove={(idx,rp)=>removeFileAt("scope",ref,idx,rp)} onOpen={openFile}/></td></tr>);})}
        </tbody></table></div>)}
-   {tab==="exc"&&(<div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-10">Sl</th><th className="p-2">Description</th><th className="p-2">Problem</th><th className="p-2">Auditor's Comment</th><th className="p-2">Management Comment</th></tr></thead><tbody>
+   {tab==="exc"&&(<div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-10">Sl</th><th className="p-2">Description</th><th className="p-2">Problem</th><th className="p-2">Auditor's Comment</th><th className="p-2">Management Comment</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
          {THEMATIC.map(([ref,desc])=>{const applies=area!=="CWS Talcher"||CWS_APPLIES.has(ref);const e=data.them[ref]||{};
            return(<tr key={ref} className={"border-b align-top "+(applies?"":"opacity-40")}><td className="p-2 font-bold">{ref}</td><td className="p-2">{desc}{!applies&&<div className="text-[10px] text-slate-400">N/A for CWS</div>}</td>
              <td className="p-2"><textarea disabled={!applies} value={e.prob||""} onChange={ev=>setThem(ref,"prob",ev.target.value)} rows={2} className="border rounded w-full p-1 text-xs"/></td>
              <td className="p-2"><textarea disabled={!applies} value={e.aud||""} onChange={ev=>setThem(ref,"aud",ev.target.value)} rows={2} className="border rounded w-full p-1 text-xs"/></td>
-             <td className="p-2"><textarea disabled={!applies} value={e.mgmt||""} onChange={ev=>setThem(ref,"mgmt",ev.target.value)} rows={2} className="border rounded w-full p-1 text-xs"/></td></tr>);})}
+             <td className="p-2"><textarea disabled={!applies} value={e.mgmt||""} onChange={ev=>setThem(ref,"mgmt",ev.target.value)} rows={2} className="border rounded w-full p-1 text-xs"/></td>
+             <td className="p-2"><FileCell files={e.files} disabled={!applies} onAdd={()=>addFiles("them",ref)} onRemove={(idx,rp)=>removeFileAt("them",ref,idx,rp)} onOpen={openFile}/></td></tr>);})}
        </tbody></table></div>)}
    {tab==="report"&&<Report area={area} period={period} data={data} coverage={coverage} autoStatus={autoStatus} reasonFor={reasonFor}/>}
    </div>
@@ -80,6 +95,22 @@ export default function App(){
  </div>);
 }
 function Card({n,t,c}){return <div className="rounded border p-3 text-center" style={{borderTopColor:c,borderTopWidth:3}}><div className="text-2xl font-bold" style={{color:c}}>{n}</div><div className="text-xs text-slate-500">{t}</div></div>;}
+
+function bytesFmt(n){if(n==null)return "";if(n<1024)return n+" B";if(n<1024*1024)return (n/1024).toFixed(0)+" KB";return (n/1024/1024).toFixed(1)+" MB";}
+
+function FileCell({files,disabled,onAdd,onRemove,onOpen}){
+ const hasApi=typeof window!=="undefined"&&!!window.attachments;
+ return(<div className="flex flex-col gap-1">
+   {(files||[]).map((f,i)=>(
+     <div key={i} className="flex items-center gap-1 text-[10px] bg-slate-100 rounded px-1 py-0.5">
+       <button type="button" onClick={()=>onOpen(f.relPath)} title={f.name+" ("+bytesFmt(f.size)+")"} className="truncate max-w-[110px] text-blue-700 underline text-left">{f.name}</button>
+       <button type="button" onClick={()=>onRemove(i,f.relPath)} title="Remove" className="text-red-500 font-bold px-0.5">×</button>
+     </div>
+   ))}
+   {!disabled&&hasApi&&<button type="button" onClick={onAdd} className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 self-start">+ Attach</button>}
+   {!hasApi&&!disabled&&<div className="text-[9px] text-slate-400">Attachments need the desktop app</div>}
+ </div>);
+}
 
 function Report({area,period,data,coverage,autoStatus,reasonFor}){
  function obsText(ref,freq){const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(e.obs)return e.obs;if(st==="No exception noted")return "No exception noted";if(st.startsWith("Not due"))return st+" — "+reasonFor(freq);if(st==="N/A")return "Not applicable";if(st==="EXCEPTION")return "(exception — enter observation)";return "";}
