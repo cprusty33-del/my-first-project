@@ -125,14 +125,14 @@ function sheetToObservationText(sheet) {
       if (!valStr) continue;
       parts.push(label + ": " + valStr);
     }
-    if (parts.length) sentences.push(parts.join("; ") + ".");
+    if (parts.length) sentences.push(parts.join("\n"));
   }
 
   if (!sentences.length) {
     return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure sheet.", hasException: false };
   }
   return {
-    text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => i + 1 + ") " + s).join("\n"),
+    text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => "Item " + (i + 1) + ":\n" + s).join("\n\n"),
     hasException: anyException,
   };
 }
@@ -344,10 +344,15 @@ function docxHeaderCell(text, width) {
   });
 }
 function docxCell(text, width) {
+  // A literal "\n" inside one TextRun does not create a line break in Word —
+  // each line needs its own Paragraph within the cell.
+  const lines = String(text || "").split("\n");
   return new TableCell({
     width: { size: width, type: WidthType.DXA },
     margins: { top: 80, bottom: 80, left: 100, right: 100 },
-    children: [new Paragraph({ spacing: { line: 260 }, children: [new TextRun({ text: text || "", size: 18, color: DOCX_INK })] })],
+    children: lines.map(
+      (line) => new Paragraph({ spacing: { line: 260 }, children: [new TextRun({ text: line, size: 18, color: DOCX_INK })] })
+    ),
   });
 }
 function docxTable(headers, widths, rows) {
