@@ -18,6 +18,7 @@ function createWindow() {
     width: 1280,
     height: 860,
     title: PRODUCT_NAME,
+    icon: path.join(__dirname, "assets", "icon.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

@@ -27,7 +27,8 @@
       "main.js",
       "preload.js",
       "index.html",
-      "build/**/*"
+      "build/**/*",
+      "assets/icon.ico"
     ],
     "directories": {
       "output": "dist"
@@ -36,6 +37,7 @@
       "target": [
         { "target": "portable", "arch": ["x64"] }
       ],
+      "icon": "assets/icon.ico",
       "signAndEditExecutable": false
     }
   }
