@@ -885,11 +885,23 @@ function docxObservationCell(row, width) {
   return new TableCell({ width: { size: width, type: WidthType.DXA }, margins: { top: 80, bottom: 80, left: 100, right: 100 }, children });
 }
 
-function buildReportDocx({ area, periodLabel, coverage, thematic }) {
+function buildReportDocx({ area, periodLabel, coverage, thematic, orientation }) {
+  // A4 is 11906 x 16838 twips. Word takes the portrait measurements and the
+  // orientation flag together, and swaps them itself for a landscape page, so
+  // the usable width is 16838 - margins on landscape and 11906 - margins on
+  // portrait. The column widths below are scaled to whichever applies.
+  const portrait = orientation === "portrait";
+  const usableWidth = (portrait ? 11906 : 16838) - 1200;
   // Landscape, so the Observation column has room for a real nested table
   // (up to ~7 columns) instead of a cramped single narrow column.
-  const coverageWidths = [700, 2600, 8600, 2438];
-  const thematicWidths = [500, 2400, 2150, 2150, 2150];
+  const fit = (parts) => {
+    const total = parts.reduce((a, b) => a + b, 0);
+    const scaled = parts.map((w) => Math.floor((w * usableWidth) / total));
+    scaled[scaled.length - 1] += usableWidth - scaled.reduce((a, b) => a + b, 0);
+    return scaled;
+  };
+  const coverageWidths = fit([700, 2600, 8600, 2438]);
+  const thematicWidths = fit([500, 2400, 2150, 2150, 2150]);
   const coverageTable = new Table({
     width: { size: coverageWidths.reduce((a, b) => a + b, 0), type: WidthType.DXA },
     columnWidths: coverageWidths,
@@ -917,7 +929,9 @@ function buildReportDocx({ area, periodLabel, coverage, thematic }) {
       {
         properties: {
           page: {
-            size: { width: 11906, height: 16838, orientation: PageOrientation.LANDSCAPE },
+            size: portrait
+              ? { width: 11906, height: 16838, orientation: PageOrientation.PORTRAIT }
+              : { width: 11906, height: 16838, orientation: PageOrientation.LANDSCAPE },
             margin: { top: 600, bottom: 600, left: 600, right: 600 },
           },
         },
@@ -1024,7 +1038,7 @@ function reportPdfHtml(ctx) {
   const title = ((ctx && ctx.fileBase) || "Report").replace(/[<&>]/g, "");
   return (
     "<!doctype html><html><head><meta charset='utf-8'><title>" + title + "</title><style>" +
-    "@page{size:A4 landscape;margin:10mm}" +
+    "@page{size:A4 " + (ctx && ctx.orientation === "portrait" ? "portrait" : "landscape") + ";margin:10mm}" +
     "html,body{margin:0;padding:0}" +
     "body{font-family:Georgia,'Times New Roman',serif;font-size:11px;color:#000}" +
     "table{border-collapse:collapse;width:100%;table-layout:fixed}" +
@@ -1049,7 +1063,7 @@ async function buildReportPdf(ctx) {
     await win.loadFile(tmpFile);
     return await win.webContents.printToPDF({
       pageSize: "A4",
-      landscape: true,
+      landscape: !(ctx && ctx.orientation === "portrait"),
       printBackground: true,
       margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
     });

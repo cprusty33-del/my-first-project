@@ -4,5 +4,8 @@
 
 @media print {
   .print\:hidden { display: none !important; }
-  @page { size: A4 landscape; margin: 10mm; }
+  /* Repeat the table head on every printed page. */
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  tr { page-break-inside: avoid; }
 }

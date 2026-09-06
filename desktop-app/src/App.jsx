@@ -320,6 +320,16 @@ function FileCell({files,disabled,onAdd,onRemove,onOpen}){
 }
 
 function Report({area,period,data,coverage,autoStatus,reasonFor}){
+ // A4 portrait or landscape, applied to the print view, the PDF and the Word
+ // file alike so all three come out on the same page.
+ const [orient,setOrient]=useState(()=>{try{return localStorage.getItem("mcl_v1:orientation")||"landscape";}catch(e){return "landscape";}});
+ useEffect(()=>{try{localStorage.setItem("mcl_v1:orientation",orient);}catch(e){}},[orient]);
+ // @page cannot be switched by a class, so the rule itself is rewritten.
+ useEffect(()=>{
+   let el=document.getElementById("mcl-page-size");
+   if(!el){el=document.createElement("style");el.id="mcl-page-size";document.head.appendChild(el);}
+   el.textContent="@page{size:A4 "+orient+";margin:10mm}";
+ },[orient]);
  // The Status chosen for a point is repeated at the end of its observation
  // so the report itself carries the opinion, not just the on-screen dropdown.
  function obsText(ref,freq){const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(e.obs)return st?e.obs.replace(/\s+$/,"")+"\n\nStatus: "+st:e.obs;if(st==="No exception noted")return "No exception noted";if(st.startsWith("Not due"))return st+" — "+reasonFor(freq);if(st==="N/A")return "Not applicable";if(st==="EXCEPTION")return "(exception — enter observation)";return "";}
@@ -335,27 +345,29 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
    const text=esc(obsText(key,freq)).replace(/\n/g,"<br/>");
    return text+tablesFor(key).map(nestedTableHTML).join("");
  }
+ // Header rows go in <thead> and data rows in <tbody>, so the print and PDF
+ // renderers repeat the header at the top of every page.
  function buildHTML(forWord){
    const th="border:1px solid #444;padding:4px;background:#1F3864;color:#fff;text-align:left;font-size:11px";
    const td="border:1px solid #999;padding:4px;font-size:11px;vertical-align:top;white-space:pre-line";
    let h="<div style='font-family:Georgia,serif'>";
    h+="<div style='text-align:center'><b>C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</b><br>Internal Audit — "+esc(area)+", MCL &middot; "+esc(period.plabel)+"</div>";
-   h+="<h3 style='color:#1F3864'>A. Scope-Coverage Statement</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl No</th><th style='"+th+"'>Scope of Work</th><th style='"+th+"'>Observation</th><th style='"+th+"'>Management Reply</th></tr>";
+   h+="<h3 style='color:#1F3864'>A. Scope-Coverage Statement</h3><table style='border-collapse:collapse;width:100%'><thead><tr><th style='"+th+"'>Sl No</th><th style='"+th+"'>Scope of Work</th><th style='"+th+"'>Observation</th><th style='"+th+"'>Management Reply</th></tr></thead><tbody>";
    coverage.forEach(([ref,title,,freq,key])=>{h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(title)+"</td><td style='"+td+"'>"+obsCellHTML(key,freq)+"</td><td style='"+td+"'>"+esc((data.scope[key]||{}).reply||"")+"</td></tr>";});
-   h+="</table><h3 style='color:#1F3864'>B. Report of Exception — 25 Points</h3><table style='border-collapse:collapse;width:100%'><tr><th style='"+th+"'>Sl</th><th style='"+th+"'>Description</th><th style='"+th+"'>Problem</th><th style='"+th+"'>Auditor's Comment</th><th style='"+th+"'>Management Comment</th></tr>";
+   h+="</tbody></table><h3 style='color:#1F3864'>B. Report of Exception — 25 Points</h3><table style='border-collapse:collapse;width:100%'><thead><tr><th style='"+th+"'>Sl</th><th style='"+th+"'>Description</th><th style='"+th+"'>Problem</th><th style='"+th+"'>Auditor's Comment</th><th style='"+th+"'>Management Comment</th></tr></thead><tbody>";
    THEMATIC.forEach(([ref,desc])=>{const e=data.them[ref]||{};h+="<tr><td style='"+td+"'>"+esc(ref)+"</td><td style='"+td+"'>"+esc(desc)+"</td><td style='"+td+"'>"+esc(e.prob||"")+"</td><td style='"+td+"'>"+esc(e.aud||"No exception noted")+"</td><td style='"+td+"'>"+esc(e.mgmt||"")+"</td></tr>";});
-   h+="</table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
+   h+="</tbody></table><p style='font-size:10px;font-style:italic;border-top:1px solid #444;padding-top:4px'>Non-Assumption / Non-Hallucination Certificate: All observations and figures are entered by the auditor from management-supplied records. No figures have been assumed or invented.</p></div>";
    return h;
  }
  function reportPayload(){
    const fileBase="Report_"+area.replace(/ /g,"")+"_"+period.label.replace(/ /g,"");
    const coverageRows=coverage.map(([ref,title,,freq,key])=>({ref,title,observation:obsText(key,freq),reply:(data.scope[key]||{}).reply||"",tables:tablesFor(key)}));
    const thematicRows=THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return{ref,desc,prob:e.prob||"",aud:e.aud||"No exception noted",mgmt:e.mgmt||""};});
-   return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows};
+   return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows,orientation:orient};
  }
  // The report's own markup, sent to the main process to be rendered as a real
  // PDF by Chromium — the same bytes whether it is previewed or saved.
- function pdfPayload(){return{fileBase:reportPayload().fileBase,html:buildHTML(false)};}
+ function pdfPayload(){return{fileBase:reportPayload().fileBase,html:buildHTML(false),orientation:orient};}
  async function previewPdf(){
    if(!window.reportIO||!window.reportIO.previewPdf){window.print();return;}
    try{
@@ -406,6 +418,11 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  }
  return(<div>
    <div className="flex flex-wrap gap-2 mb-3 print:hidden">
+     <label className="text-xs font-semibold text-slate-600 mr-1">Page
+       <select value={orient} onChange={e=>setOrient(e.target.value)} className="ml-1 border rounded px-2 py-1 text-sm font-normal">
+         <option value="landscape">A4 Landscape</option>
+         <option value="portrait">A4 Portrait</option>
+       </select></label>
      <button onClick={previewPdf} className="px-3 py-1.5 rounded bg-[#1F3864] text-white text-sm font-semibold">Print Preview</button>
      <button onClick={dlPdf} className="px-3 py-1.5 rounded bg-[#8B3A62] text-white text-sm font-semibold">Download PDF</button>
      <button onClick={()=>window.print()} className="px-3 py-1.5 rounded bg-slate-600 text-white text-sm font-semibold">Print</button>
