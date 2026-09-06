@@ -41,7 +41,20 @@ export default function App(){
  const [ask,setAsk]=useState(null);
  const period=PERIODS.find(p=>p.id===pid);
  const key="mcl_v1:"+area+":"+pid;
- useEffect(()=>{const d=sget(key);setData(d||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
+ // Earlier builds prefixed imported report text with a "--- From report: … ---"
+ // label. It was never meant to be read, so strip it from saved data on load.
+ function dropReportLabels(d){
+   if(!d||!d.scope)return d;
+   const scope={};
+   Object.entries(d.scope).forEach(([k,e])=>{
+     const obs=e&&e.obs;
+     scope[k]=typeof obs==="string"&&obs.includes("--- From report: ")
+       ? {...e,obs:obs.replace(/^[ \t]*--- From report: .*? ---[ \t]*\r?\n?/gm,"").replace(/\n{3,}/g,"\n\n").replace(/^\n+/,"")}
+       : e;
+   });
+   return {...d,scope};
+ }
+ useEffect(()=>{const d=sget(key);setData(dropReportLabels(d)||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
  useEffect(()=>{setSaved(false);const t=setTimeout(()=>{sset(key,data);setSaved(true);},600);return()=>clearTimeout(t);},[data]);
  // Appends a 5th element (key) to each row: same as ref, except a small
  // number of refs in the source data are genuinely duplicated (e.g. "14.3.2"
@@ -97,17 +110,17 @@ export default function App(){
  // Copies each point's own paragraphs from the report into that point's
  // Observation box, word for word. Where the report cannot be read without a
  // judgement call, the app asks rather than guessing.
- const REPORT_MARK=(fileName)=>"--- From report: "+fileName+" ---";
  function writeReportObs(fills,fileName,mode){
    if(!fills.length)return 0;
-   const mark=REPORT_MARK(fileName);
    const written=mode==="skip"?fills.filter(f=>!((data.scope[f.key]||{}).obs||"").trim()).length:fills.length;
    setData(d=>{
      const scope={...d.scope};
      fills.forEach(f=>{
        const cur=scope[f.key]||{};
        const existing=cur.obs||"";
-       const block=mark+"\n"+f.text;
+       // The report's words go in on their own — no source label, since the
+       // Observation is read as the audit opinion, not as a working note.
+       const block=f.text;
        let obs;
        if(mode==="replace")obs=block;
        else if(mode==="skip"&&existing.trim())return;
