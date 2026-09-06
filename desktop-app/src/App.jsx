@@ -178,6 +178,20 @@ export default function App(){
    msg+="\n\nNothing was reworded or summarised — the report's own words were copied across.";
    alert(msg);
  }
+ // Empties the Observation box of every Scope Coverage point in one go.
+ // Attached files, Status and Management Reply are left alone — only the
+ // Observation text is cleared.
+ function clearAllObservations(){
+   const filled=coverage.filter(([,,,,key])=>((data.scope[key]||{}).obs||"").trim());
+   if(!filled.length){alert("No observations to clear for "+area+" / "+period.label+".");return;}
+   if(!window.confirm("Clear the Observation text of all "+filled.length+" Scope Coverage point(s) for "+area+" / "+period.label+"?\n\nThis empties the Observation boxes only. Attached files, Status and Management Reply are kept. This cannot be undone."))return;
+   setData(d=>{
+     const scope={...d.scope};
+     filled.forEach(([,,,,key])=>{const cur=scope[key];if(cur)scope[key]={...cur,obs:""};});
+     return{...d,scope};
+   });
+   alert("Cleared the Observation of "+filled.length+" point(s).");
+ }
  async function clearAllAttachments(){
    const removals=[];
    Object.entries(data.scope).forEach(([ref,e])=>{(e&&e.files||[]).forEach(f=>removals.push({ref,relPath:f.relPath,name:f.name}));});
@@ -236,6 +250,7 @@ export default function App(){
        <div className="flex items-center gap-2 mb-2">
          <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel / Word / PDF)</button>
          <button type="button" onClick={importReportObservations} className="text-xs px-2 py-1.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold">📄 Load Observations from Report (Word / PDF)</button>
+         <button type="button" onClick={clearAllObservations} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🧹 Clear All Observations</button>
          <button type="button" onClick={clearAllAttachments} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🗑️ Clear All Attachments</button>
          <span className="text-[10px] text-slate-400">Matched automatically: Excel sheets named after a point (e.g. "1.1.2a"), and Word/PDF sections headed "Annexure 1.1.2a — …". A finished report is matched on paragraphs that start with the point number, e.g. "2.7  Unweighed wagons".</span>
        </div>
