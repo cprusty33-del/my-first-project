@@ -336,6 +336,23 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
    const thematicRows=THEMATIC.map(([ref,desc])=>{const e=data.them[ref]||{};return{ref,desc,prob:e.prob||"",aud:e.aud||"No exception noted",mgmt:e.mgmt||""};});
    return{area,periodLabel:period.plabel,fileBase,coverage:coverageRows,thematic:thematicRows};
  }
+ // The report's own markup, sent to the main process to be rendered as a real
+ // PDF by Chromium — the same bytes whether it is previewed or saved.
+ function pdfPayload(){return{fileBase:reportPayload().fileBase,html:buildHTML(false)};}
+ async function previewPdf(){
+   if(!window.reportIO||!window.reportIO.previewPdf){window.print();return;}
+   try{
+     const r=await window.reportIO.previewPdf(pdfPayload());
+     if(!r.ok)alert("Could not open the print preview: "+(r.error||"unknown error"));
+   }catch(e){alert("Could not open the print preview.\n\n"+String(e&&e.message?e.message:e));}
+ }
+ async function dlPdf(){
+   if(!window.reportIO||!window.reportIO.savePdf){window.print();return;}
+   try{
+     const r=await window.reportIO.savePdf(pdfPayload());
+     if(!r.ok&&!r.canceled)alert("Could not save the PDF: "+(r.error||"unknown error"));
+   }catch(e){alert("Could not save the PDF.\n\n"+String(e&&e.message?e.message:e));}
+ }
  async function dlWord(){
    try{
      if(window.reportIO&&window.reportIO.saveDocx){
@@ -372,7 +389,9 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  }
  return(<div>
    <div className="flex flex-wrap gap-2 mb-3 print:hidden">
-     <button onClick={()=>window.print()} className="px-3 py-1.5 rounded bg-[#1F3864] text-white text-sm font-semibold">Print / PDF</button>
+     <button onClick={previewPdf} className="px-3 py-1.5 rounded bg-[#1F3864] text-white text-sm font-semibold">Print Preview</button>
+     <button onClick={dlPdf} className="px-3 py-1.5 rounded bg-[#8B3A62] text-white text-sm font-semibold">Download PDF</button>
+     <button onClick={()=>window.print()} className="px-3 py-1.5 rounded bg-slate-600 text-white text-sm font-semibold">Print</button>
      <button onClick={dlWord} className="px-3 py-1.5 rounded bg-[#2E5496] text-white text-sm font-semibold">Download Word</button>
      <button onClick={dlExcel} className="px-3 py-1.5 rounded bg-[#2f7d3a] text-white text-sm font-semibold">Download Excel</button>
      <button onClick={copyRep} className="px-3 py-1.5 rounded bg-[#B8860B] text-white text-sm font-semibold">Copy tables</button>

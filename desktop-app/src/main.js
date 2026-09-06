@@ -1012,6 +1012,70 @@ async function saveReportFile(event, ctx, ext, buildBuffer) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PDF output. Printing from the window and choosing a PDF printer goes through
+// whatever the machine has installed and can produce a file Acrobat refuses to
+// open. Rendering the page here with Chromium's own PDF writer always produces
+// a real PDF, and gives the print preview and the saved file the same content.
+// ---------------------------------------------------------------------------
+
+// Wraps the report's table markup in a complete A4-landscape page.
+function reportPdfHtml(ctx) {
+  const title = ((ctx && ctx.fileBase) || "Report").replace(/[<&>]/g, "");
+  return (
+    "<!doctype html><html><head><meta charset='utf-8'><title>" + title + "</title><style>" +
+    "@page{size:A4 landscape;margin:10mm}" +
+    "html,body{margin:0;padding:0}" +
+    "body{font-family:Georgia,'Times New Roman',serif;font-size:11px;color:#000}" +
+    "table{border-collapse:collapse;width:100%;table-layout:fixed}" +
+    "td,th{word-wrap:break-word;overflow-wrap:anywhere}" +
+    "tr{page-break-inside:avoid}" +
+    "thead{display:table-header-group}" +
+    "h3{page-break-after:avoid}" +
+    "</style></head><body>" + ((ctx && ctx.html) || "") + "</body></html>"
+  );
+}
+
+// Renders the report to PDF bytes in a hidden window. The HTML goes through a
+// temp file rather than a data: URL, which Chromium truncates on long pages.
+async function buildReportPdf(ctx) {
+  const tmpFile = path.join(os.tmpdir(), "mcl-report-" + Date.now() + "-" + process.pid + ".html");
+  await fsp.writeFile(tmpFile, reportPdfHtml(ctx), "utf8");
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { javascript: false, nodeIntegration: false, contextIsolation: true, sandbox: true },
+  });
+  try {
+    await win.loadFile(tmpFile);
+    return await win.webContents.printToPDF({
+      pageSize: "A4",
+      landscape: true,
+      printBackground: true,
+      margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
+    });
+  } finally {
+    if (!win.isDestroyed()) win.destroy();
+    fsp.unlink(tmpFile).catch(() => {});
+  }
+}
+
+ipcMain.handle("report:savePdf", (event, ctx) => saveReportFile(event, ctx, "pdf", buildReportPdf));
+
+// Print preview: renders the very PDF the Download PDF button would save and
+// opens it in the machine's PDF viewer, where it can be read and printed.
+ipcMain.handle("report:previewPdf", async (event, ctx) => {
+  try {
+    const buffer = await buildReportPdf(ctx);
+    const file = path.join(os.tmpdir(), ((ctx && ctx.fileBase) || "Report").replace(/[^\w.\- ]+/g, "_") + " — preview.pdf");
+    await fsp.writeFile(file, buffer);
+    const err = await shell.openPath(file);
+    if (err) return { ok: false, error: err };
+    return { ok: true, filePath: file };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+});
+
 ipcMain.handle("report:saveDocx", (event, ctx) => saveReportFile(event, ctx, "docx", buildReportDocx));
 ipcMain.handle("report:saveXlsx", (event, ctx) => saveReportFile(event, ctx, "xlsx", buildReportXlsx));
 

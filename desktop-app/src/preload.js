@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld("reportIO", {
   saveDocx: (ctx) => ipcRenderer.invoke("report:saveDocx", ctx),
   saveXlsx: (ctx) => ipcRenderer.invoke("report:saveXlsx", ctx),
   copyHtml: (ctx) => ipcRenderer.invoke("report:copyHtml", ctx),
+  savePdf: (ctx) => ipcRenderer.invoke("report:savePdf", ctx),
+  previewPdf: (ctx) => ipcRenderer.invoke("report:previewPdf", ctx),
   importObservations: (ctx) => ipcRenderer.invoke("report:importObservations", ctx),
 });
