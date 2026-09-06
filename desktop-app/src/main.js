@@ -555,6 +555,223 @@ ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
   return { byRef, unmatched, filesProcessed: result.filePaths.length };
 });
 
+// ---------------------------------------------------------------------------
+// Report import: read a finished internal-audit report (Word/PDF) that is
+// written point by point, and lift each point's own paragraphs into that
+// point's Observation box.
+//
+// A point in these reports is a paragraph that begins with the point number,
+// e.g. "2.7  Unweighed wagons   [EXCEPTION]", followed by the write-up for
+// that point. Nothing is summarised, reworded or inferred — the report's own
+// words are carried across verbatim. Where the report cannot be read without
+// a judgement call, the app asks the user instead of guessing.
+// ---------------------------------------------------------------------------
+
+// "2.7  Unweighed wagons   [EXCEPTION]" -> ref "2.7", rest "Unweighed wagons ..."
+const POINT_HEADING_RE = /^(\d+(?:\.\d+)*\.?\s*(?:\(\s*[a-z]\s*\)|[a-z](?![a-z]))?)[ \t]+(\S.*)$/;
+// "Section 14 - Service Contracts (Contract Management Cell)"
+const SECTION_BANNER_RE = /^section\s+(\d+)\b[\s\-–—:]*(.*)$/i;
+// "4.  Thematic 25-Point Report - Bharatpur Area" — a part heading, not a point
+const PART_HEADING_RE = /^\d{1,2}\.[ \t]{2,}[A-Z][^.]{0,80}$/;
+// the "[VERIFIED - NO MATERIAL DISCREPANCY]" / "[EXCEPTION]" tag some reports carry
+const STATUS_TAG_RE = /\[([^\]]{2,80})\]\s*$/;
+
+// Reads any supported report file down to a flat list of non-blank paragraphs.
+async function reportParagraphs(srcPath) {
+  const ext = path.extname(srcPath).toLowerCase();
+  let text = "";
+  if (ext === ".docx") text = await extractDocxText(srcPath);
+  else if (ext === ".doc") text = await extractDocText(srcPath);
+  else if (ext === ".pdf") text = await extractPdfText(srcPath);
+  else throw new Error("unsupported report format: " + ext);
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, "").trim())
+    .filter(Boolean);
+}
+
+// Splits the paragraph list into per-point write-ups and section-level
+// narrative. `isKnownRef` decides whether a leading number is really a point
+// of this audit programme, so ordinary prose that happens to start with a
+// number is never mistaken for a heading.
+function parseReportPoints(paras, isKnownRef) {
+  const isBoundary = (line) =>
+    SECTION_BANNER_RE.test(line) || PART_HEADING_RE.test(line);
+
+  // Pass 1 — mark every paragraph that is a genuine point heading.
+  const marks = [];
+  paras.forEach((line, i) => {
+    if (isBoundary(line)) return;
+    const m = line.match(POINT_HEADING_RE);
+    if (!m) return;
+    const refToken = m[1].trim();
+    if (!isKnownRef(refToken)) return;
+    const tagged = STATUS_TAG_RE.exec(line);
+    marks.push({
+      index: i,
+      refToken,
+      title: (tagged ? m[2].slice(0, tagged.index - (line.length - m[2].length)) : m[2]).replace(/[\s\-–—:]+$/, "").trim(),
+      status: tagged ? tagged[1].trim() : "",
+    });
+  });
+
+  // Pass 2 — collect each point's body, i.e. everything up to the next
+  // heading, section banner or part heading.
+  const points = [];
+  marks.forEach((mark, n) => {
+    const stop = n + 1 < marks.length ? marks[n + 1].index : paras.length;
+    const body = [];
+    for (let i = mark.index + 1; i < stop; i++) {
+      if (isBoundary(paras[i])) break;
+      body.push(paras[i]);
+    }
+    // A bare numbered sub-heading such as "14.3  Hiring of HEMM for OB
+    // Removal" sitting immediately above the real point of the same number
+    // carries no write-up of its own — drop it rather than blanking the point.
+    if (!body.length) return;
+    points.push({ ...mark, text: body.join("\n") });
+  });
+
+  // Pass 3 — sections written up as one narrative instead of point by point.
+  const sections = [];
+  paras.forEach((line, i) => {
+    const m = line.match(SECTION_BANNER_RE);
+    if (!m) return;
+    let stop = paras.length;
+    for (let j = i + 1; j < paras.length; j++) {
+      if (SECTION_BANNER_RE.test(paras[j]) || PART_HEADING_RE.test(paras[j])) { stop = j; break; }
+    }
+    const hasPoint = points.some((p) => p.index > i && p.index < stop);
+    if (hasPoint) return;
+    const body = paras.slice(i + 1, stop);
+    if (!body.length) return;
+    sections.push({ section: m[1], title: (m[2] || "").trim(), text: body.join("\n") });
+  });
+
+  return { points, sections };
+}
+
+// Reads a finished report and works out which scope point each write-up
+// belongs to. `points` is the coverage list as the screen shows it:
+// [{ key, ref, title }]. Nothing is written to the app here — the renderer
+// gets back what was found, what needs a decision, and what was left alone.
+ipcMain.handle("report:importObservations", async (event, ctx) => {
+  const { points: scopePoints } = ctx || {};
+  const parentWin = BrowserWindow.fromWebContents(event.sender);
+  if (parentWin) parentWin.focus();
+  const picked = await dialog.showOpenDialog(parentWin, {
+    title: "Select the audit report (Word or PDF) written point by point",
+    properties: ["openFile"],
+    filters: [
+      { name: "Audit report (Word, PDF)", extensions: ["docx", "doc", "pdf"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+
+  const srcPath = picked.filePaths[0];
+  const fileName = path.basename(srcPath);
+  let paras;
+  try {
+    paras = await reportParagraphs(srcPath);
+  } catch (e) {
+    return { canceled: false, fileName, error: "This file could not be read: " + String(e && e.message ? e.message : e) };
+  }
+  if (!paras.length) {
+    return {
+      canceled: false,
+      fileName,
+      error:
+        path.extname(srcPath).toLowerCase() === ".pdf"
+          ? "No text was found in this PDF. It is probably a scan (a picture of the pages), which this app cannot read."
+          : "No text was found in this document.",
+    };
+  }
+
+  // Index the coverage list by normalised ref. Two scope points can genuinely
+  // carry the same printed number, so a ref maps to a list, not to one point.
+  const byNorm = new Map();
+  for (const p of scopePoints || []) {
+    const norm = normalizeRef(p.ref);
+    if (!norm) continue;
+    if (!byNorm.has(norm)) byNorm.set(norm, []);
+    byNorm.get(norm).push(p);
+  }
+  const lookup = (refToken) => {
+    const exact = byNorm.get(normalizeRef(refToken));
+    if (exact && exact.length) return exact;
+    const numeric = String(refToken).match(/^\s*(\d+(?:\.\d+)*)/);
+    if (numeric) {
+      const fallback = byNorm.get(normalizeRef(numeric[1]));
+      if (fallback && fallback.length) return fallback;
+    }
+    return [];
+  };
+
+  const parsed = parseReportPoints(paras, (refToken) => lookup(refToken).length > 0);
+
+  const fills = [];      // decided: this text goes into this point
+  const questions = [];  // needs the user to choose
+  const skipped = [];    // read but deliberately not used
+  const usedKeys = new Set();
+
+  for (const pt of parsed.points) {
+    const candidates = lookup(pt.refToken);
+    const text = capText(pt.text);
+    if (candidates.length === 1) {
+      fills.push({ key: candidates[0].key, ref: candidates[0].ref, reportRef: pt.refToken, title: pt.title, status: pt.status, text });
+      usedKeys.add(candidates[0].key);
+      continue;
+    }
+    // More than one scope point prints this same number — only the user knows
+    // which one the report meant.
+    questions.push({
+      id: "dup:" + pt.refToken + ":" + pt.index,
+      kind: "choose-point",
+      question:
+        'The report has a paragraph numbered "' + pt.refToken + '" headed "' + pt.title + '".\n' +
+        "Your scope list has " + candidates.length + " different points that all carry the number \"" +
+        candidates[0].ref + '". Which one does this paragraph belong to?',
+      options: candidates
+        .map((c, n) => ({ value: c.key, label: "Point " + (n + 1) + ": " + c.title }))
+        .concat([{ value: "", label: "Do not use this paragraph at all" }]),
+      payload: { reportRef: pt.refToken, title: pt.title, status: pt.status, text },
+    });
+  }
+
+  // Sections the report deals with in one paragraph instead of point by point.
+  for (const sec of parsed.sections) {
+    const members = (scopePoints || []).filter((p) => String(p.ref).split(".")[0] === sec.section && !usedKeys.has(p.key));
+    if (!members.length) continue;
+    questions.push({
+      id: "sec:" + sec.section,
+      kind: "choose-spread",
+      question:
+        "Section " + sec.section + (sec.title ? " (" + sec.title + ")" : "") +
+        " is written up in the report as one paragraph covering all its points together, " +
+        "instead of one paragraph for each point.\nThere are " + members.length +
+        " points in this Section in the app. What should the app do?",
+      options: [
+        { value: "spread", label: "Put that same paragraph into all " + members.length + " points" },
+        { value: "", label: "Leave those " + members.length + " points blank" },
+      ],
+      payload: { keys: members.map((m) => m.key), text: capText(sec.text) },
+    });
+  }
+
+  const filledKeys = new Set(fills.map((f) => f.key));
+  const pendingKeys = new Set();
+  questions.forEach((q) => {
+    if (q.kind === "choose-point") q.options.forEach((o) => o.value && pendingKeys.add(o.value));
+    if (q.kind === "choose-spread") q.payload.keys.forEach((k) => pendingKeys.add(k));
+  });
+  for (const p of scopePoints || []) {
+    if (!filledKeys.has(p.key) && !pendingKeys.has(p.key)) skipped.push({ key: p.key, ref: p.ref, title: p.title });
+  }
+
+  return { canceled: false, fileName, fills, questions, skipped, paragraphsRead: paras.length };
+});
+
 ipcMain.handle("attachments:open", async (event, relPath) => {
   const full = resolveAttachmentPath(relPath);
   const err = await shell.openPath(full);

@@ -38,6 +38,7 @@ export default function App(){
  const [tab,setTab]=useState("dash");
  const [data,setData]=useState({scope:{},them:{},submitted:false});
  const [saved,setSaved]=useState(true);
+ const [ask,setAsk]=useState(null);
  const period=PERIODS.find(p=>p.id===pid);
  const key="mcl_v1:"+area+":"+pid;
  useEffect(()=>{const d=sget(key);setData(d||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
@@ -89,6 +90,77 @@ export default function App(){
      msg+="\n\n"+unmatched.length+" sheet(s) could not be matched and were skipped:\n"+unmatched.slice(0,20).map(u=>"• "+u.file+(u.sheet?" ["+u.sheet+"]":"")+" — "+u.reason).join("\n");
      if(unmatched.length>20)msg+="\n… and "+(unmatched.length-20)+" more.";
    }
+   alert(msg);
+ }
+
+ // ---- Import a finished point-by-point audit report (Word/PDF) -------------
+ // Copies each point's own paragraphs from the report into that point's
+ // Observation box, word for word. Where the report cannot be read without a
+ // judgement call, the app asks rather than guessing.
+ const REPORT_MARK=(fileName)=>"--- From report: "+fileName+" ---";
+ function writeReportObs(fills,fileName,mode){
+   if(!fills.length)return 0;
+   const mark=REPORT_MARK(fileName);
+   const written=mode==="skip"?fills.filter(f=>!((data.scope[f.key]||{}).obs||"").trim()).length:fills.length;
+   setData(d=>{
+     const scope={...d.scope};
+     fills.forEach(f=>{
+       const cur=scope[f.key]||{};
+       const existing=cur.obs||"";
+       const block=mark+"\n"+f.text;
+       let obs;
+       if(mode==="replace")obs=block;
+       else if(mode==="skip"&&existing.trim())return;
+       else obs=existing.trim()?existing+"\n\n"+block:block;
+       const status=/^\s*exception\b/i.test(f.status||"")?"EXCEPTION":cur.status;
+       scope[f.key]={...cur,obs,status};
+     });
+     return{...d,scope};
+   });
+   return written;
+ }
+ async function importReportObservations(){
+   if(!window.reportIO||!window.reportIO.importObservations){alert("This build of the app cannot read reports. Please use the latest version.");return;}
+   let r;
+   try{r=await window.reportIO.importObservations({points:coverage.map(([ref,title,,,key])=>({key,ref,title}))});}
+   catch(e){alert("The report could not be read.\n\n"+String(e&&e.message?e.message:e));return;}
+   if(!r||r.canceled)return;
+   if(r.error){alert(r.error);return;}
+   const fills=r.fills||[],questions=[...(r.questions||[])];
+   if(!fills.length&&!questions.length){
+     alert("Nothing was copied.\n\nThe app read "+(r.paragraphsRead||0)+" paragraph(s) from \""+r.fileName+"\" but found no paragraph that begins with a point number from your scope list (for example \"2.7  Unweighed wagons\").\n\nPlease check that each point in the report starts with its point number.");
+     return;
+   }
+   // Ask about points that already carry an Observation before overwriting.
+   const clash=fills.filter(f=>((data.scope[f.key]||{}).obs||"").trim()).length;
+   if(clash){
+     questions.unshift({id:"__mode",kind:"choose-mode",question:
+       clash+" of the points the app is about to fill already have something written in the Observation box.\nWhat should the app do with those?",
+       options:[
+         {value:"append",label:"Keep what is there and add the report's words below it"},
+         {value:"replace",label:"Replace what is there with the report's words"},
+         {value:"skip",label:"Leave those "+clash+" points exactly as they are"}]});
+   }
+   if(questions.length){setAsk({fileName:r.fileName,fills,questions,skipped:r.skipped||[],idx:0,answers:{}});return;}
+   finishReportImport({fileName:r.fileName,fills,questions:[],skipped:r.skipped||[]},{});
+ }
+ function finishReportImport(pending,answers){
+   const mode=answers.__mode||"append";
+   const fills=[...pending.fills];
+   let spreadPoints=0;
+   pending.questions.forEach(q=>{
+     const a=answers[q.id];
+     if(!a)return;
+     if(q.kind==="choose-point")fills.push({key:a,ref:a,reportRef:q.payload.reportRef,title:q.payload.title,status:q.payload.status,text:q.payload.text});
+     if(q.kind==="choose-spread"&&a==="spread"){q.payload.keys.forEach(k=>{fills.push({key:k,ref:k,title:"",status:"",text:q.payload.text});spreadPoints++;});}
+   });
+   const written=writeReportObs(fills,pending.fileName,mode);
+   setAsk(null);
+   let msg="Report read: "+pending.fileName+"\n\n"+written+" point(s) filled from the report"+(mode==="skip"?" (points that already had text were left alone)":mode==="replace"?" (existing text replaced)":" (added below any existing text)")+".";
+   if(spreadPoints)msg+="\n"+spreadPoints+" of those came from a Section paragraph you chose to spread across its points.";
+   const untouched=(pending.skipped||[]).length;
+   if(untouched)msg+="\n\n"+untouched+" scope point(s) had no matching paragraph in the report and were left untouched.";
+   msg+="\n\nNothing was reworded or summarised — the report's own words were copied across.";
    alert(msg);
  }
  async function clearAllAttachments(){
@@ -148,8 +220,9 @@ export default function App(){
    {tab==="scope"&&(<div className="overflow-x-auto">
        <div className="flex items-center gap-2 mb-2">
          <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel / Word / PDF)</button>
+         <button type="button" onClick={importReportObservations} className="text-xs px-2 py-1.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold">📄 Load Observations from Report (Word / PDF)</button>
          <button type="button" onClick={clearAllAttachments} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🗑️ Clear All Attachments</button>
-         <span className="text-[10px] text-slate-400">Matched automatically: Excel sheets named after a point (e.g. "1.1.2a"), and Word/PDF sections headed "Annexure 1.1.2a — …".</span>
+         <span className="text-[10px] text-slate-400">Matched automatically: Excel sheets named after a point (e.g. "1.1.2a"), and Word/PDF sections headed "Annexure 1.1.2a — …". A finished report is matched on paragraphs that start with the point number, e.g. "2.7  Unweighed wagons".</span>
        </div>
        {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
        <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
@@ -173,7 +246,28 @@ export default function App(){
    {tab==="report"&&<Report area={area} period={period} data={data} coverage={coverage} autoStatus={autoStatus} reasonFor={reasonFor}/>}
    </div>
    <div className="text-center text-[10px] text-slate-400 pb-6">Data stored privately on this computer; persists across sessions. No figures are invented — you enter every observation.</div>
+   {ask&&<AskDialog ask={ask} onAnswer={(id,value)=>setAsk(a=>({...a,answers:{...a.answers,[id]:value},idx:a.idx+1}))} onCancel={()=>setAsk(null)} onDone={answers=>finishReportImport(ask,answers)}/>}
  </div>);
+}
+
+// Puts one plain-language question at a time to the user while a report is
+// being read. Nothing is written to the app until every question is answered.
+function AskDialog({ask,onAnswer,onCancel,onDone}){
+  const q=ask.questions[ask.idx];
+  useEffect(()=>{if(!q)onDone(ask.answers);},[q]);
+  if(!q)return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-6 z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-5">
+        <div className="text-xs font-semibold text-slate-500 mb-1">Reading &ldquo;{ask.fileName}&rdquo; — question {ask.idx+1} of {ask.questions.length}</div>
+        <div className="text-sm text-slate-800 whitespace-pre-line mb-4">{q.question}</div>
+        {q.payload&&q.payload.text&&<div className="text-[11px] text-slate-600 bg-amber-50 border border-amber-200 rounded p-2 mb-4 max-h-40 overflow-y-auto whitespace-pre-line">{q.payload.text.slice(0,700)}{q.payload.text.length>700?"…":""}</div>}
+        <div className="flex flex-col gap-2">
+          {q.options.map((o,i)=><button key={i} type="button" onClick={()=>onAnswer(q.id,o.value)} className="text-left text-sm border rounded px-3 py-2 hover:bg-emerald-50 hover:border-emerald-300">{o.label}</button>)}
+        </div>
+        <div className="mt-4 text-right"><button type="button" onClick={onCancel} className="text-xs text-slate-500 underline">Stop and change nothing</button></div>
+      </div>
+    </div>);
 }
 function Card({n,t,c}){return <div className="rounded border p-3 text-center" style={{borderTopColor:c,borderTopWidth:3}}><div className="text-2xl font-bold" style={{color:c}}>{n}</div><div className="text-xs text-slate-500">{t}</div></div>;}
 
