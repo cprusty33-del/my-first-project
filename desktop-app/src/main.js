@@ -8,6 +8,7 @@ const XLSX = require("xlsx");
 const mammoth = require("mammoth");
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 const WordExtractor = require("word-extractor");
+const { parse: parseHtml } = require("node-html-parser");
 const {
   Document,
   Packer,
@@ -78,17 +79,18 @@ function sheetToText(sheet) {
 
 // MCL's audit annexure templates have a header row ending "...Exception,
 // Remarks" and their own stated rule: "Each EXCEPTION line becomes an
-// Observation; this sheet is its cited Annexure." When a sheet matches that
+// Observation; this sheet is its cited Annexure." When a grid matches that
 // template, transcribe every row that either (a) is literally marked
 // EXCEPTION, or (b) has a non-empty Remarks entry — auditors often note a
 // genuine finding in Remarks (e.g. "Form-H not provided by management")
 // without also flipping the Exception dropdown — into plain sentences built
 // from that row's own column headers and values (no interpretation, nothing
-// invented) instead of dumping the whole sheet. Returns null when the sheet
-// doesn't have a recognizable "Exception" column, so the caller can fall
-// back to a raw dump for sheets that aren't this template.
-function sheetToObservationText(sheet) {
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+// invented) instead of dumping everything. Returns null when the grid has no
+// recognizable "Exception" column, so the caller can fall back to raw text.
+//
+// Takes a plain 2-D array so the same rule serves Excel sheets and Word
+// tables alike.
+function gridToObservation(rows) {
   let headerIdx = -1;
   let headerRow = null;
   let exceptionCol = -1;
@@ -136,13 +138,17 @@ function sheetToObservationText(sheet) {
   }
 
   if (!sentences.length) {
-    return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure sheet.", hasException: false, table: null };
+    return { text: "No rows marked EXCEPTION or carrying a Remark in this annexure.", hasException: false, table: null };
   }
   return {
     text: sentences.length === 1 ? sentences[0] : sentences.map((s, i) => "Item " + (i + 1) + ":\n" + s).join("\n\n"),
     hasException: anyException,
     table: { headers: columns.map((c) => c.label), rows: tableRows },
   };
+}
+
+function sheetToObservationText(sheet) {
+  return gridToObservation(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }));
 }
 
 function extractExcelText(fullPath) {
@@ -208,6 +214,149 @@ async function extractPdfText(fullPath) {
   return (data.text || "").trim();
 }
 
+// ---------------------------------------------------------------------------
+// Word / PDF annexures
+//
+// Excel annexures carry one sheet per audit point, so the sheet name says
+// which point a block of data belongs to. Word and PDF have no sheets, so the
+// equivalent marker is the annexure's own heading line — MCL's template writes
+// "Annexure 1.1.2a — ..." and "Scope 1.1.2a — ..." above each table. A
+// document is split at those headings and each section is treated exactly like
+// one Excel sheet. Only an explicit "Annexure"/"Scope" heading (or, in Word, a
+// Heading-styled line starting with a point number) starts a section — a bare
+// number in running text is never treated as one.
+// ---------------------------------------------------------------------------
+
+// Matched against a lowercased line, so [a-z] really means lowercase: the
+// optional letter suffix must not swallow the first letter of the next word
+// ("annexure 3.1 to report..." is ref 3.1, not "3.1t").
+const REF_HEADING_RE = /^\s*(?:annexure|annex|scope)\s*(?:ref\.?)?\s*[:\-–—]?\s*(\d+(?:\.\d+)*\.?\s*(?:\(\s*[a-z]\s*\)|[a-z](?![a-z]))?)/;
+
+function refFromHeading(line) {
+  const m = String(line || "").toLowerCase().match(REF_HEADING_RE);
+  return m ? m[1].trim() : null;
+}
+
+// A Word Heading-styled line such as "1.1.2a OC Coal Deptl" — explicit
+// document structure, so a leading point number is enough here.
+function refFromLeadingToken(line) {
+  const token = String(line || "").trim().split(/\s+/)[0];
+  return /^\d/.test(token) ? token : null;
+}
+
+function refFromFileName(fileBase) {
+  const stem = path.basename(fileBase, path.extname(fileBase)).replace(/[_-]+/g, " ").toLowerCase();
+  const m = stem.match(/(?:^|[^\d.])(\d+(?:\.\d+)+\s*(?:\(\s*[a-z]\s*\)|[a-z](?![a-z]))?)/);
+  return m ? m[1].trim() : null;
+}
+
+// Reads a .docx into ordered blocks of text and real tables. mammoth's HTML
+// keeps document order, so a table stays attached to the heading above it.
+async function docxBlocks(fullPath) {
+  const result = await mammoth.convertToHtml({ path: fullPath });
+  const root = parseHtml(result.value || "");
+  const blocks = [];
+  for (const node of root.childNodes) {
+    const tag = (node.tagName || "").toLowerCase();
+    if (tag === "table") {
+      const grid = [];
+      for (const tr of node.querySelectorAll("tr")) {
+        const cells = [];
+        for (const cell of tr.childNodes) {
+          const cellTag = (cell.tagName || "").toLowerCase();
+          if (cellTag === "td" || cellTag === "th") cells.push(cell.text.replace(/\s+/g, " ").trim());
+        }
+        if (cells.length) grid.push(cells);
+      }
+      if (grid.length) blocks.push({ type: "table", grid });
+    } else {
+      const text = (node.text || "").replace(/[ \t]+/g, " ").trim();
+      if (text) blocks.push({ type: "text", text, heading: /^h[1-6]$/.test(tag) });
+    }
+  }
+  return blocks;
+}
+
+// Splits ordered Word blocks into one section per annexure heading.
+function segmentDocxBlocks(blocks) {
+  const segments = [];
+  let current = null;
+  for (const b of blocks) {
+    let ref = null;
+    if (b.type === "text") {
+      ref = refFromHeading(b.text) || (b.heading ? refFromLeadingToken(b.text) : null);
+    }
+    if (ref && (!current || normalizeRef(current.ref) !== normalizeRef(ref))) {
+      current = { ref, blocks: [] };
+      segments.push(current);
+    }
+    if (current) current.blocks.push(b);
+  }
+  return segments;
+}
+
+// Same idea for plain text (PDF, legacy .doc), line by line.
+function segmentPlainText(text) {
+  const segments = [];
+  let current = null;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const ref = refFromHeading(line);
+    if (ref && (!current || normalizeRef(current.ref) !== normalizeRef(ref))) {
+      current = { ref, lines: [] };
+      segments.push(current);
+    }
+    if (current) current.lines.push(line);
+  }
+  if (segments.length) return segments.map((s) => ({ ref: s.ref, text: s.lines.join("\n").trim() }));
+  // PDF text extraction does not always keep headings on their own line, so
+  // fall back to scanning the whole document for the same explicit
+  // "Annexure <point no.>" marker wherever it appears.
+  return segmentRunningText(text);
+}
+
+const REF_INLINE_RE = /(?:annexure|annex|scope)\s*(?:ref\.?)?\s*[:\-–—]?\s*(\d+(?:\.\d+)*\.?\s*(?:\(\s*[a-z]\s*\)|[a-z](?![a-z]))?)/g;
+
+function segmentRunningText(text) {
+  const src = String(text || "");
+  const lower = src.toLowerCase();
+  const marks = [];
+  REF_INLINE_RE.lastIndex = 0;
+  let m;
+  while ((m = REF_INLINE_RE.exec(lower)) !== null) {
+    const ref = m[1].trim();
+    if (!ref) continue;
+    if (marks.length && normalizeRef(marks[marks.length - 1].ref) === normalizeRef(ref)) continue;
+    marks.push({ ref, at: m.index });
+  }
+  return marks.map((mark, i) => ({
+    ref: mark.ref,
+    text: src.slice(mark.at, i + 1 < marks.length ? marks[i + 1].at : undefined).trim(),
+  }));
+}
+
+// One Word section behaves like one Excel sheet: if it holds an annexure
+// table (a grid with an "Exception" column) apply the same EXCEPTION/Remarks
+// rule; otherwise fall back to that section's plain text.
+function observationFromBlocks(blocks) {
+  for (const b of blocks) {
+    if (b.type !== "table") continue;
+    const obs = gridToObservation(b.grid);
+    if (obs) return obs;
+  }
+  const text = blocks
+    .map((b) => (b.type === "table" ? b.grid.map((r) => r.filter(Boolean).join("  |  ")).join("\n") : b.text))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return { text, hasException: false, table: null };
+}
+
+async function extractDocxObservation(fullPath) {
+  const blocks = await docxBlocks(fullPath);
+  if (!blocks.length) return { text: "", hasException: false, table: null };
+  return observationFromBlocks(blocks);
+}
+
 // Best-effort text extraction: never throws, returns null on any failure
 // or unsupported type so a bad/locked file just skips text extraction
 // (the file is still attached either way).
@@ -218,8 +367,8 @@ async function extractText(fullPath) {
       const { text, hasException, table } = extractExcelText(fullPath);
       return text ? { text: capText(text), hasException, table } : null;
     } else if (ext === ".docx") {
-      const text = await extractDocxText(fullPath);
-      return text ? { text: capText(text), hasException: false, table: null } : null;
+      const { text, hasException, table } = await extractDocxObservation(fullPath);
+      return text ? { text: capText(text), hasException, table } : null;
     } else if (ext === ".doc") {
       const text = await extractDocText(fullPath);
       return text ? { text: capText(text), hasException: false, table: null } : null;
@@ -257,21 +406,112 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
   return added;
 });
 
-// Bulk-loads a batch of Excel annexure workbooks (like MCL's per-section
-// annexures, one sheet per audit point) and auto-distributes each sheet's
-// content to the scope point whose ref matches that sheet's name — e.g. a
-// sheet named "1.1.2a OC Coal Deptl" matches ref "1.1.2. (a)". Only exact
-// normalized-ref matches are used; anything that doesn't match a ref in the
-// current coverage list is reported back as unmatched rather than guessed.
+// Splits one annexure file into "units" — the per-point pieces the bulk
+// loader distributes. Excel gives one unit per sheet; Word and PDF give one
+// unit per "Annexure <ref>" section. Each unit carries the point number it
+// claims (refToken), a label for display, and the observation derived from it.
+// Never resolves refs itself — the caller matches them against the live
+// coverage list, so an unrecognized number is reported, never guessed.
+async function parseAnnexureFile(srcPath) {
+  const fileBase = path.basename(srcPath);
+  const ext = path.extname(srcPath).toLowerCase();
+  const units = [];
+  const notes = [];
+
+  if ([".xlsx", ".xls", ".xlsm"].includes(ext)) {
+    const wb = XLSX.readFile(srcPath);
+    for (const sheetName of wb.SheetNames) {
+      if (/^index$/i.test(sheetName.trim())) continue;
+      const leadingToken = sheetName.trim().split(/\s+/)[0];
+      if (!/^\d/.test(leadingToken)) {
+        notes.push({ label: sheetName, reason: "sheet name doesn't start with a point number" });
+        continue;
+      }
+      const sheet = wb.Sheets[sheetName];
+      const obs = sheetToObservationText(sheet);
+      units.push({
+        refToken: leadingToken,
+        label: sheetName,
+        text: obs ? obs.text : sheetToText(sheet),
+        hasException: obs ? obs.hasException : false,
+        table: obs ? obs.table : null,
+      });
+    }
+    return { units, notes };
+  }
+
+  if (ext === ".docx") {
+    const blocks = await docxBlocks(srcPath);
+    for (const seg of segmentDocxBlocks(blocks)) {
+      const obs = observationFromBlocks(seg.blocks);
+      units.push({ refToken: seg.ref, label: "Annexure " + seg.ref, ...obs });
+    }
+    if (!units.length && blocks.length) {
+      // No headings inside — fall back to a point number in the file name.
+      const fileRef = refFromFileName(fileBase);
+      if (fileRef) units.push({ refToken: fileRef, label: "whole document", ...observationFromBlocks(blocks) });
+      else notes.push({ label: null, reason: 'no "Annexure <point no.>" heading found, and the file name has no point number' });
+    }
+    return { units, notes };
+  }
+
+  if (ext === ".pdf" || ext === ".doc") {
+    const text = ext === ".pdf" ? await extractPdfText(srcPath) : await extractDocText(srcPath);
+    if (!text) {
+      notes.push({
+        label: null,
+        reason:
+          ext === ".pdf"
+            ? "no text found in this PDF — a scanned/image-only PDF needs OCR, which this app does not do"
+            : "no text found in this document",
+      });
+      return { units, notes };
+    }
+    for (const seg of segmentPlainText(text)) {
+      units.push({ refToken: seg.ref, label: "Annexure " + seg.ref, text: seg.text, hasException: false, table: null });
+    }
+    if (!units.length) {
+      const fileRef = refFromFileName(fileBase);
+      if (fileRef) units.push({ refToken: fileRef, label: "whole document", text, hasException: false, table: null });
+      else notes.push({ label: null, reason: 'no "Annexure <point no.>" heading found, and the file name has no point number' });
+    }
+    return { units, notes };
+  }
+
+  notes.push({ label: null, reason: "unsupported file type (" + ext + ")" });
+  return { units, notes };
+}
+
+// Resolves a point number claimed by a unit against the live coverage list.
+// Tries the number exactly as written first; only if that matches nothing does
+// it retry without a trailing letter (so "Annexure 2.6 (a)" can still reach
+// point "2.6" when no "2.6a" exists). Returns [] when nothing matches.
+function resolveRefs(refToken, refByNorm) {
+  const exact = refByNorm.get(normalizeRef(refToken));
+  if (exact && exact.length) return exact;
+  const numericOnly = String(refToken).match(/^\s*(\d+(?:\.\d+)*)/);
+  if (numericOnly) {
+    const fallback = refByNorm.get(normalizeRef(numericOnly[1]));
+    if (fallback && fallback.length) return fallback;
+  }
+  return [];
+}
+
+// Bulk-loads a batch of annexure files (Excel, Word or PDF) and distributes
+// each per-point piece to the scope point whose ref it names — an Excel sheet
+// named "1.1.2a OC Coal Deptl", or a Word/PDF section headed "Annexure
+// 1.1.2a — ...", both match ref "1.1.2. (a)". Anything that doesn't match a
+// ref in the current coverage list is reported back as unmatched, never
+// guessed into the nearest point.
 ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
   const { area, period, refs } = ctx || {};
   const parentWin = BrowserWindow.fromWebContents(event.sender);
   if (parentWin) parentWin.focus();
   const result = await dialog.showOpenDialog(parentWin, {
-    title: "Select Excel annexure files (one sheet per audit point)",
+    title: "Select annexure files (Excel sheets, or Word/PDF with 'Annexure <point no.>' headings)",
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "Excel files", extensions: ["xlsx", "xls", "xlsm"] },
+      { name: "Annexures (Excel, Word, PDF)", extensions: ["xlsx", "xls", "xlsm", "docx", "doc", "pdf"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
@@ -289,34 +529,24 @@ ipcMain.handle("annexures:bulkAdd", async (event, ctx) => {
   const unmatched = [];
   for (const srcPath of result.filePaths) {
     const fileBase = path.basename(srcPath);
-    let wb;
+    let parsed;
     try {
-      wb = XLSX.readFile(srcPath);
+      parsed = await parseAnnexureFile(srcPath);
     } catch (e) {
-      unmatched.push({ file: fileBase, sheet: null, reason: "could not open file: " + String(e) });
+      unmatched.push({ file: fileBase, sheet: null, reason: "could not read file: " + String(e) });
       continue;
     }
-    for (const sheetName of wb.SheetNames) {
-      if (/^index$/i.test(sheetName.trim())) continue;
-      const leadingToken = sheetName.trim().split(/\s+/)[0];
-      if (!/^\d/.test(leadingToken)) {
-        unmatched.push({ file: fileBase, sheet: sheetName, reason: "sheet name doesn't start with a point number" });
+    parsed.notes.forEach((n) => unmatched.push({ file: fileBase, sheet: n.label, reason: n.reason }));
+    for (const unit of parsed.units) {
+      const matchedRefs = resolveRefs(unit.refToken, refByNorm);
+      if (!matchedRefs.length) {
+        unmatched.push({ file: fileBase, sheet: unit.label, reason: 'no scope point matches "' + unit.refToken + '"' });
         continue;
       }
-      const norm = normalizeRef(leadingToken);
-      const matchedRefs = refByNorm.get(norm);
-      if (!matchedRefs || !matchedRefs.length) {
-        unmatched.push({ file: fileBase, sheet: sheetName, reason: "no scope point matches \"" + leadingToken + "\"" });
-        continue;
-      }
-      const sheet = wb.Sheets[sheetName];
-      const obs = sheetToObservationText(sheet);
-      const text = capText(obs ? obs.text : sheetToText(sheet));
-      const hasException = obs ? obs.hasException : false;
-      const table = obs ? obs.table : null;
+      const text = capText(unit.text);
       for (const ref of matchedRefs) {
         const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
-        const record = { ...meta, name: fileBase + " — " + sheetName, text, hasException, table };
+        const record = { ...meta, name: fileBase + " — " + unit.label, text, hasException: unit.hasException, table: unit.table };
         if (!byRef[ref]) byRef[ref] = [];
         byRef[ref].push(record);
       }

@@ -147,9 +147,9 @@ export default function App(){
        <div className="mt-2 text-xs text-slate-500">This app tracks findings and builds the report tables. It does not read your Excel annexures — keep filling those in separately.</div></div></div>)}
    {tab==="scope"&&(<div className="overflow-x-auto">
        <div className="flex items-center gap-2 mb-2">
-         <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel)</button>
+         <button type="button" onClick={bulkLoadAnnexures} className="text-xs px-2 py-1.5 rounded border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 font-semibold">📎 Bulk Load Annexures (Excel / Word / PDF)</button>
          <button type="button" onClick={clearAllAttachments} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🗑️ Clear All Attachments</button>
-         <span className="text-[10px] text-slate-400">Select one or more Excel annexures — sheets named after a point (e.g. "1.1.2a") are matched automatically.</span>
+         <span className="text-[10px] text-slate-400">Matched automatically: Excel sheets named after a point (e.g. "1.1.2a"), and Word/PDF sections headed "Annexure 1.1.2a — …".</span>
        </div>
        {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
        <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
