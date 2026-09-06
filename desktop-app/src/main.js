@@ -740,9 +740,18 @@ ipcMain.handle("report:importObservations", async (event, ctx) => {
   }
 
   // Sections the report deals with in one paragraph instead of point by point.
+  const notDueSections = [];
   for (const sec of parsed.sections) {
-    const members = (scopePoints || []).filter((p) => String(p.ref).split(".")[0] === sec.section && !usedKeys.has(p.key));
-    if (!members.length) continue;
+    const inSection = (scopePoints || []).filter((p) => String(p.ref).split(".")[0] === sec.section && !usedKeys.has(p.key));
+    if (!inSection.length) continue;
+    // A Section whose points are all reported at quarter- or year-end is not
+    // due in this period, so there is nothing to decide — say so instead of
+    // putting a question to the user.
+    const members = inSection.filter((p) => !p.notDue);
+    if (!members.length) {
+      notDueSections.push({ section: sec.section, title: sec.title, points: inSection.length });
+      continue;
+    }
     questions.push({
       id: "sec:" + sec.section,
       kind: "choose-spread",
@@ -769,7 +778,7 @@ ipcMain.handle("report:importObservations", async (event, ctx) => {
     if (!filledKeys.has(p.key) && !pendingKeys.has(p.key)) skipped.push({ key: p.key, ref: p.ref, title: p.title });
   }
 
-  return { canceled: false, fileName, fills, questions, skipped, paragraphsRead: paras.length };
+  return { canceled: false, fileName, fills, questions, skipped, notDueSections, paragraphsRead: paras.length };
 });
 
 ipcMain.handle("attachments:open", async (event, relPath) => {
