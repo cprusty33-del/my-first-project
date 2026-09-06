@@ -9,8 +9,9 @@
     "build:js": "esbuild src/index.jsx --bundle --outfile=build/bundle.js --loader:.jsx=jsx",
     "build:main": "esbuild src/main.js --bundle --platform=node --target=node18 --external:electron --outfile=build/main.js",
     "build:preload": "esbuild src/preload.js --bundle --platform=node --target=node18 --external:electron --outfile=build/preload.js",
-    "build": "npm run build:css && npm run build:js && npm run build:main && npm run build:preload",
-    "dist": "npm run build && electron-builder --win"
+    "build": "npm run build:stamp && npm run build:css && npm run build:js && npm run build:main && npm run build:preload",
+    "dist": "npm run build && electron-builder --win",
+    "build:stamp": "node scripts/stamp.js"
   },
   "devDependencies": {
     "docx": "^9.7.1",
