@@ -41,6 +41,7 @@ export default function App(){
  const [saved,setSaved]=useState(true);
  const [ask,setAsk]=useState(null);
  const [importMsg,setImportMsg]=useState(null);
+ const [sheetPick,setSheetPick]=useState(null);
  const period=PERIODS.find(p=>p.id===pid);
  const key="mcl_v1:"+area+":"+pid;
  // Earlier builds prefixed imported report text with a "--- From report: … ---"
@@ -85,8 +86,20 @@ export default function App(){
  }
  async function addFiles(kind,ref){
    if(!window.attachments)return;
-   const added=await window.attachments.add({area,period:pid,ref});
+   const r=await window.attachments.add({area,period:pid,ref});
+   // Older builds returned a plain array; current ones return {added,pending}.
+   const added=Array.isArray(r)?r:(r&&r.added)||[];
+   const pending=Array.isArray(r)?[]:(r&&r.pending)||[];
    applyAddedFiles(kind,ref,added);
+   if(pending.length)setSheetPick({kind,ref,queue:pending,idx:0});
+ }
+ // Attaches the sheet the user named, then moves on to the next workbook.
+ async function attachChosenSheet(sheet){
+   const p=sheetPick; if(!p)return;
+   const item=p.queue[p.idx];
+   const rec=await window.attachments.addSheet({area,period:pid,ref:p.ref,srcPath:item.srcPath,sheet});
+   applyAddedFiles(p.kind,p.ref,[rec]);
+   if(p.idx+1<p.queue.length)setSheetPick({...p,idx:p.idx+1});else setSheetPick(null);
  }
  async function bulkLoadAnnexures(){
    if(!window.attachments||!window.attachments.bulkAdd)return;
@@ -286,6 +299,19 @@ export default function App(){
    {tab==="report"&&<Report area={area} period={period} data={data} coverage={coverage} autoStatus={autoStatus} reasonFor={reasonFor}/>}
    </div>
    <div className="text-center text-[10px] text-slate-400 pb-6">Data stored privately on this computer; persists across sessions. No figures are invented — you enter every observation.</div>
+   {sheetPick&&(()=>{const it=sheetPick.queue[sheetPick.idx];return (
+     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-6 z-50">
+       <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-5">
+         <div className="text-xs font-semibold text-slate-500 mb-1">Attaching to point {sheetPick.ref}{sheetPick.queue.length>1?" — workbook "+(sheetPick.idx+1)+" of "+sheetPick.queue.length:""}</div>
+         <div className="text-sm text-slate-800 mb-1">&ldquo;{it.fileName}&rdquo; has {it.sheets.length} sheets.</div>
+         <div className="text-xs text-slate-600 mb-3">Which sheet belongs to this point? Only that sheet will be read into the Observation.</div>
+         <div className="flex flex-col gap-2 max-h-72 overflow-y-auto">
+           {it.sheets.map(sn=><button key={sn} type="button" onClick={()=>attachChosenSheet(sn)} className="text-left text-sm border rounded px-3 py-2 hover:bg-emerald-50 hover:border-emerald-300">{sn}</button>)}
+           <button type="button" onClick={()=>attachChosenSheet("")} className="text-left text-xs border rounded px-3 py-2 text-slate-600 hover:bg-slate-50">Attach the whole workbook instead</button>
+         </div>
+         <div className="mt-4 text-right"><button type="button" onClick={()=>setSheetPick(null)} className="text-xs text-slate-500 underline">Skip this file</button></div>
+       </div>
+     </div>);})()}
    {ask&&<AskDialog ask={ask} onAnswer={(id,value)=>setAsk(a=>({...a,answers:{...a.answers,[id]:value},idx:a.idx+1}))} onCancel={()=>setAsk(null)} onDone={answers=>finishReportImport(ask,answers)}/>}
  </div>);
 }
@@ -375,6 +401,45 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  }
  // The report's own markup, sent to the main process to be rendered as a real
  // PDF by Chromium — the same bytes whether it is previewed or saved.
+ // Builds a document of the attached annexures alone: every point that has a
+ // file, its tables and the text pulled from them, and nothing else.
+ function annexuresHTML(){
+   const th="border:1px solid #444;padding:4px;background:#F5E6C8;color:#3A3A3A;text-align:left;font-size:11px";
+   const td="border:1px solid #999;padding:4px;font-size:11px;vertical-align:top;white-space:pre-line";
+   let h="<div style='font-family:Georgia,serif'>";
+   h+="<div style='text-align:center'><b>C K PRUSTY &amp; ASSOCIATES, Chartered Accountants</b><br>Annexures — "+esc(area)+", MCL &middot; "+esc(period.plabel)+"</div>";
+   let n=0;
+   coverage.forEach(([ref,title,,,key])=>{
+     const files=((data.scope[key]||{}).files||[]);
+     if(!files.length)return;
+     n++;
+     h+="<h3 style='color:#3A3A3A;margin-top:14px'>Annexure to point "+esc(ref)+" — "+esc(title)+"</h3>";
+     files.forEach(f=>{
+       h+="<div style='font-size:10px;font-style:italic;margin:2px 0'>Source: "+esc(f.name)+"</div>";
+       if(f.table&&f.table.headers&&f.table.headers.length&&f.table.rows&&f.table.rows.length){
+         h+="<table style='border-collapse:collapse;width:100%'><thead><tr>"+f.table.headers.map(x=>"<th style='"+th+"'>"+esc(x)+"</th>").join("")+"</tr></thead><tbody>";
+         f.table.rows.forEach(r=>{h+="<tr>"+r.map(v=>"<td style='"+td+"'>"+esc(v)+"</td>").join("")+"</tr>";});
+         h+="</tbody></table>";
+       }else if(f.text){
+         h+="<div style='"+td+";border:1px solid #999'>"+esc(f.text)+"</div>";
+       }else{
+         h+="<div style='font-size:10px'>(file attached; no table could be read from it)</div>";
+       }
+     });
+   });
+   if(!n)h+="<p>No annexure files are attached for this Area and Period.</p>";
+   h+="</div>";
+   return {html:h,count:n};
+ }
+ async function previewAnnexures(){
+   const a=annexuresHTML();
+   if(!a.count){alert("No annexure files are attached for "+area+" / "+period.label+".\n\nAttach files against the points in Scope Coverage first.");return;}
+   if(!window.reportIO||!window.reportIO.previewPdf){window.print();return;}
+   try{
+     const r=await window.reportIO.previewPdf({fileBase:reportPayload().fileBase+"_Annexures",html:a.html,orientation:orient});
+     if(!r.ok)alert("Could not open the annexures: "+(r.error||"unknown error"));
+   }catch(e){alert("Could not open the annexures.\n\n"+String(e&&e.message?e.message:e));}
+ }
  function pdfPayload(){return{fileBase:reportPayload().fileBase,html:buildHTML(false),orientation:orient};}
  async function previewPdf(){
    if(!window.reportIO||!window.reportIO.previewPdf){window.print();return;}
@@ -436,6 +501,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
      <button onClick={()=>window.print()} className="px-3 py-1.5 rounded bg-slate-600 text-white text-sm font-semibold">Print</button>
      <button onClick={dlWord} className="px-3 py-1.5 rounded bg-[#2E5496] text-white text-sm font-semibold">Download Word</button>
      <button onClick={dlExcel} className="px-3 py-1.5 rounded bg-[#2f7d3a] text-white text-sm font-semibold">Download Excel</button>
+     <button onClick={previewAnnexures} className="px-3 py-1.5 rounded bg-[#7A6A2F] text-white text-sm font-semibold">Print Annexures Only</button>
      <button onClick={copyRep} className="px-3 py-1.5 rounded bg-[#B8860B] text-white text-sm font-semibold">Copy tables</button>
    </div>
    <div id="rep" className="text-xs">

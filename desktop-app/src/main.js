@@ -151,9 +151,9 @@ function sheetToObservationText(sheet) {
   return gridToObservation(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }));
 }
 
-function extractExcelText(fullPath) {
+function extractExcelText(fullPath, wantedSheet) {
   const wb = XLSX.readFile(fullPath);
-  const sheetName = wb.SheetNames[0];
+  const sheetName = wantedSheet && wb.SheetNames.includes(wantedSheet) ? wantedSheet : wb.SheetNames[0];
   if (!sheetName) return { text: "", hasException: false, table: null };
   const sheet = wb.Sheets[sheetName];
   const obs = sheetToObservationText(sheet);
@@ -360,11 +360,11 @@ async function extractDocxObservation(fullPath) {
 // Best-effort text extraction: never throws, returns null on any failure
 // or unsupported type so a bad/locked file just skips text extraction
 // (the file is still attached either way).
-async function extractText(fullPath) {
+async function extractText(fullPath, wantedSheet) {
   const ext = path.extname(fullPath).toLowerCase();
   try {
     if ([".xlsx", ".xls", ".xlsm", ".csv"].includes(ext)) {
-      const { text, hasException, table } = extractExcelText(fullPath);
+      const { text, hasException, table } = extractExcelText(fullPath, wantedSheet);
       return text ? { text: capText(text), hasException, table } : null;
     } else if (ext === ".docx") {
       const { text, hasException, table } = await extractDocxObservation(fullPath);
@@ -397,13 +397,49 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
   if (result.canceled || !result.filePaths.length) return [];
 
   const added = [];
+  const pending = [];
   for (const srcPath of result.filePaths) {
+    // A workbook usually holds one sheet per audit point. Rather than pull in
+    // the whole book, hand the sheet names back so the user can name the one
+    // that belongs to this point.
+    const sheets = excelSheetNames(srcPath);
+    if (sheets && sheets.length > 1) {
+      pending.push({ srcPath, fileName: path.basename(srcPath), sheets });
+      continue;
+    }
     const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
     const full = resolveAttachmentPath(meta.relPath);
     const extracted = await extractText(full);
     added.push({ ...meta, text: extracted ? extracted.text : null, hasException: extracted ? extracted.hasException : false, table: extracted ? extracted.table : null });
   }
-  return added;
+  return { added, pending };
+});
+
+// Sheet names of a workbook, or null when the file is not a workbook.
+function excelSheetNames(srcPath) {
+  if (![".xlsx", ".xls", ".xlsm"].includes(path.extname(srcPath).toLowerCase())) return null;
+  try {
+    return XLSX.readFile(srcPath, { bookSheets: true }).SheetNames || [];
+  } catch (e) {
+    return null;
+  }
+}
+
+// Attaches one named sheet of a workbook (or the whole book when sheet is
+// empty) to a point, once the user has chosen which.
+ipcMain.handle("attachments:addSheet", async (event, ctx) => {
+  const { area, period, ref, srcPath, sheet } = ctx || {};
+  const meta = await copyIntoAttachmentDir(area, period, ref, srcPath);
+  const full = resolveAttachmentPath(meta.relPath);
+  const extracted = await extractText(full, sheet || undefined);
+  return {
+    ...meta,
+    name: sheet ? meta.name + " — " + sheet : meta.name,
+    sheet: sheet || null,
+    text: extracted ? extracted.text : null,
+    hasException: extracted ? extracted.hasException : false,
+    table: extracted ? extracted.table : null,
+  };
 });
 
 // Splits one annexure file into "units" — the per-point pieces the bulk

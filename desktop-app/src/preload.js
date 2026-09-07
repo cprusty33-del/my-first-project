@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("attachments", {
   open: (relPath) => ipcRenderer.invoke("attachments:open", relPath),
   remove: (relPath) => ipcRenderer.invoke("attachments:remove", relPath),
   bulkAdd: (ctx) => ipcRenderer.invoke("annexures:bulkAdd", ctx),
+  addSheet: (ctx) => ipcRenderer.invoke("attachments:addSheet", ctx),
 });
 
 contextBridge.exposeInMainWorld("reportIO", {
