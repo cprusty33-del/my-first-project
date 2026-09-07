@@ -44,20 +44,31 @@ export default function App(){
  const [sheetPick,setSheetPick]=useState(null);
  const period=PERIODS.find(p=>p.id===pid);
  const key="mcl_v1:"+area+":"+pid;
- // Earlier builds prefixed imported report text with a "--- From report: … ---"
- // label. It was never meant to be read, so strip it from saved data on load.
- function dropReportLabels(d){
+ // Tidies data saved by earlier builds: the "--- From report: … ---" label they
+ // wrote above imported report text, and the transcribed sentences they wrote
+ // for an annexure that also produced a table (the table now stands alone).
+ function tidySaved(d){
    if(!d||!d.scope)return d;
    const scope={};
    Object.entries(d.scope).forEach(([k,e])=>{
-     const obs=e&&e.obs;
-     scope[k]=typeof obs==="string"&&obs.includes("--- From report: ")
-       ? {...e,obs:obs.replace(/^[ \t]*--- From report: .*? ---[ \t]*\r?\n?/gm,"").replace(/\n{3,}/g,"\n\n").replace(/^\n+/,"")}
-       : e;
+     let obs=e&&typeof e.obs==="string"?e.obs:null;
+     if(obs===null){scope[k]=e;return;}
+     const before=obs;
+     if(obs.includes("--- From report: "))obs=obs.replace(/^[ \t]*--- From report: .*? ---[ \t]*\r?\n?/gm,"");
+     ((e&&e.files)||[]).forEach(f=>{
+       if(!(f&&f.table&&f.table.headers&&f.table.headers.length&&f.table.rows&&f.table.rows.length))return;
+       // Cut out exactly the block that was written for this file, so anything
+       // typed after it survives. Fall back to the marker-based cut only when
+       // the stored text no longer matches.
+       const exact="--- From "+f.name+" ---\n"+(f.text||"");
+       obs=f.text&&obs.includes(exact)?obs.split(exact).join(""):removeExtractedBlock(obs,f.name);
+     });
+     obs=obs.replace(/\n{3,}/g,"\n\n").replace(/^\n+/,"");
+     scope[k]=obs===before?e:{...e,obs};
    });
    return {...d,scope};
  }
- useEffect(()=>{const d=sget(key);setData(dropReportLabels(d)||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
+ useEffect(()=>{const d=sget(key);setData(tidySaved(d)||{scope:{},them:{},submitted:false});setSaved(true);},[key]);
  useEffect(()=>{setSaved(false);const t=setTimeout(()=>{sset(key,data);setSaved(true);},600);return()=>clearTimeout(t);},[data]);
  // Appends a 5th element (key) to each row: same as ref, except a small
  // number of refs in the source data are genuinely duplicated (e.g. "14.3.2"
@@ -75,7 +86,10 @@ export default function App(){
  function setThem(ref,f,v){setData(d=>({...d,them:{...d.them,[ref]:{...(d.them[ref]||{}),[f]:v}}}));}
  function applyAddedFiles(kind,ref,added){
    if(!added||!added.length)return;
-   const block=added.filter(f=>f.text).map(f=>"--- From "+f.name+" ---\n"+f.text).join("\n\n");
+   // A file that produced a table speaks through the table alone. Only a file
+   // with no table (a PDF, or Word without one) contributes text.
+   const hasTable=(f)=>!!(f.table&&f.table.headers&&f.table.headers.length&&f.table.rows&&f.table.rows.length);
+   const block=added.filter(f=>f.text&&!hasTable(f)).map(f=>"--- From "+f.name+" ---\n"+f.text).join("\n\n");
    const append=(existing)=>block?(existing?existing+"\n\n"+block:block):existing;
    const anyException=added.some(f=>f.hasException);
    if(kind==="scope"){
@@ -369,7 +383,7 @@ function Report({area,period,data,coverage,autoStatus,reasonFor}){
  function obsText(ref,freq){const e=data.scope[ref]||{};const st=e.status||autoStatus(freq);if(e.obs)return st?e.obs.replace(/\s+$/,"")+"\n\nStatus: "+st:e.obs;if(st==="No exception noted")return "No exception noted";if(st.startsWith("Not due"))return st+" — "+reasonFor(freq);if(st==="N/A")return "Not applicable";if(st==="EXCEPTION")return "(exception — enter observation)";return "";}
  function tablesFor(key){return((data.scope[key]||{}).files||[]).filter(f=>f.table&&f.table.headers&&f.table.headers.length&&f.table.rows&&f.table.rows.length).map(f=>({...f.table,fileName:f.name}));}
  function nestedTableHTML(t){
-   let s="<div style='margin-top:4px'><i style='font-size:9px'>Source data"+(t.fileName?(" — "+esc(t.fileName)):"")+":</i>";
+   let s="<div style='margin-top:4px'>";
    s+="<table style='border-collapse:collapse;width:100%;margin-top:2px'><tr>"+t.headers.map(h=>"<th style='border:1px solid #999;padding:2px;background:#FBF6EC;font-size:9px;text-align:left'>"+esc(h)+"</th>").join("")+"</tr>";
    t.rows.forEach(r=>{s+="<tr>"+r.map(v=>"<td style='border:1px solid #ccc;padding:2px;font-size:9px'>"+esc(v)+"</td>").join("")+"</tr>";});
    s+="</table></div>";

@@ -928,12 +928,6 @@ function docxObservationCell(row, width) {
   );
   (row.tables || []).forEach((t) => {
     if (!t || !t.headers || !t.headers.length || !t.rows.length) return;
-    children.push(
-      new Paragraph({
-        spacing: { before: 100, after: 40 },
-        children: [new TextRun({ text: "Source data:", italics: true, bold: true, size: 16, color: DOCX_INK })],
-      })
-    );
     const nested = docxNestedTable(t, width - 200);
     if (nested) children.push(nested);
   });
