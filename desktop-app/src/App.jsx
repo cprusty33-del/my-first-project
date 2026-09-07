@@ -40,6 +40,7 @@ export default function App(){
  const [data,setData]=useState({scope:{},them:{},submitted:false});
  const [saved,setSaved]=useState(true);
  const [ask,setAsk]=useState(null);
+ const [importMsg,setImportMsg]=useState(null);
  const period=PERIODS.find(p=>p.id===pid);
  const key="mcl_v1:"+area+":"+pid;
  // Earlier builds prefixed imported report text with a "--- From report: … ---"
@@ -138,10 +139,11 @@ export default function App(){
    let r;
    try{r=await window.reportIO.importObservations({points:coverage.map(([ref,title,,freq,key])=>({key,ref,title,notDue:autoStatus(freq).startsWith("Not due")}))});}
    catch(e){alert("The report could not be read.\n\n"+String(e&&e.message?e.message:e));return;}
-   if(!r||r.canceled)return;
-   if(r.error){alert(r.error);return;}
+   if(!r||r.canceled){setImportMsg({kind:"warn",lines:["No file was chosen, so nothing was changed."]});return;}
+   if(r.error){setImportMsg({kind:"err",lines:["Could not read \""+r.fileName+"\".",r.error]});alert(r.error);return;}
    const fills=r.fills||[],questions=[...(r.questions||[])];
    if(!fills.length&&!questions.length){
+     setImportMsg({kind:"err",lines:["Read \""+r.fileName+"\" — "+(r.paragraphsRead||0)+" paragraph(s).","No paragraph begins with a point number from your scope list, so nothing was copied.",'Each point in the report must start with its number, e.g. "2.7  Unweighed wagons".']});
      alert("Nothing was copied.\n\nThe app read "+(r.paragraphsRead||0)+" paragraph(s) from \""+r.fileName+"\" but found no paragraph that begins with a point number from your scope list (for example \"2.7  Unweighed wagons\").\n\nPlease check that each point in the report starts with its point number.");
      return;
    }
@@ -177,6 +179,7 @@ export default function App(){
    if(untouched)msg+="\n\n"+untouched+" scope point(s) had no matching paragraph in the report and were left untouched.";
    (pending.notDueSections||[]).forEach(sn=>{msg+="\nSection "+sn.section+(sn.title?" ("+sn.title+")":"")+" — all "+sn.points+" point(s) are reported at quarter- or year-end, so they are not due in this period and were left blank.";});
    msg+="\n\nNothing was reworded or summarised — the report's own words were copied across.";
+   setImportMsg({kind:written?"ok":"warn",lines:msg.split("\n").filter(Boolean)});
    alert(msg);
  }
  // Empties the Observation box of every Scope Coverage point in one go.
@@ -256,6 +259,11 @@ export default function App(){
          <button type="button" onClick={clearAllAttachments} className="text-xs px-2 py-1.5 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-semibold">🗑️ Clear All Attachments</button>
          <span className="text-[10px] text-slate-400">Matched automatically: Excel sheets named after a point (e.g. "1.1.2a"), and Word/PDF sections headed "Annexure 1.1.2a — …". A finished report is matched on paragraphs that start with the point number, e.g. "2.7  Unweighed wagons".</span>
        </div>
+       {importMsg&&<div className={"text-xs mb-2 rounded p-2 border "+(importMsg.kind==="ok"?"bg-green-50 border-green-300 text-green-900":importMsg.kind==="warn"?"bg-amber-50 border-amber-300 text-amber-900":"bg-red-50 border-red-300 text-red-900")}>
+         <div className="flex items-start gap-2">
+           <div className="flex-1">{importMsg.lines.map((l,i)=><div key={i} className={i===0?"font-semibold":""}>{l}</div>)}</div>
+           <button type="button" onClick={()=>setImportMsg(null)} className="text-[10px] underline shrink-0">Dismiss</button>
+         </div></div>}
        {area==="CWS Talcher"&&<div className="text-xs mb-2 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">CWS Talcher: Sections 1 &amp; 2 Not Applicable. Showing the 13 applicable thematic points.</div>}
        <table className="w-full text-xs border-collapse"><thead><tr className="bg-[#1F3864] text-white text-left"><th className="p-2 w-24">Ref</th><th className="p-2">Scope of Work</th><th className="p-2 w-40">Status</th><th className="p-2">Observation</th><th className="p-2">Management Reply</th><th className="p-2 w-32">Files</th></tr></thead><tbody>
          {coverage.map(([ref,title,sec,freq,key])=>{const e=data.scope[key]||{};const st=e.status||autoStatus(freq);const nd=st.startsWith("Not due");

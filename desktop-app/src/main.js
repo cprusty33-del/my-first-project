@@ -412,6 +412,23 @@ ipcMain.handle("attachments:add", async (event, ctx) => {
 // claims (refToken), a label for display, and the observation derived from it.
 // Never resolves refs itself — the caller matches them against the live
 // coverage list, so an unrecognized number is reported, never guessed.
+// A finished report is written as "2.7  Unweighed wagons …", one paragraph per
+// point, with no "Annexure" headings — so the annexure loader finds nothing in
+// it. That is the wrong button rather than a bad file, and saying so is more
+// use than reporting no match.
+function looksLikePointByPointReport(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  let numbered = 0;
+  for (const line of lines) {
+    if (/^\s*\d+(?:\.\d+)+\.?\s*(?:\(\s*[a-z]\s*\)|[a-z](?![a-z]))?[ \t]+\S/.test(line)) numbered++;
+    if (numbered >= 8) return true;
+  }
+  return false;
+}
+
+const WRONG_BUTTON_NOTE =
+  'this looks like a finished report, not an annexure — its paragraphs start with the point number rather than an "Annexure <point no.>" heading. Use the "Load Observations from Report (Word / PDF)" button instead.';
+
 async function parseAnnexureFile(srcPath) {
   const fileBase = path.basename(srcPath);
   const ext = path.extname(srcPath).toLowerCase();
@@ -449,7 +466,9 @@ async function parseAnnexureFile(srcPath) {
     if (!units.length && blocks.length) {
       // No headings inside — fall back to a point number in the file name.
       const fileRef = refFromFileName(fileBase);
-      if (fileRef) units.push({ refToken: fileRef, label: "whole document", ...observationFromBlocks(blocks) });
+      const flatText = blocks.map((b) => (b.type === "text" ? b.text : (b.grid || []).map((r) => r.join(" ")).join("\n"))).join("\n");
+      if (looksLikePointByPointReport(flatText)) notes.push({ label: null, reason: WRONG_BUTTON_NOTE });
+      else if (fileRef) units.push({ refToken: fileRef, label: "whole document", ...observationFromBlocks(blocks) });
       else notes.push({ label: null, reason: 'no "Annexure <point no.>" heading found, and the file name has no point number' });
     }
     return { units, notes };
@@ -472,7 +491,8 @@ async function parseAnnexureFile(srcPath) {
     }
     if (!units.length) {
       const fileRef = refFromFileName(fileBase);
-      if (fileRef) units.push({ refToken: fileRef, label: "whole document", text, hasException: false, table: null });
+      if (looksLikePointByPointReport(text)) notes.push({ label: null, reason: WRONG_BUTTON_NOTE });
+      else if (fileRef) units.push({ refToken: fileRef, label: "whole document", text, hasException: false, table: null });
       else notes.push({ label: null, reason: 'no "Annexure <point no.>" heading found, and the file name has no point number' });
     }
     return { units, notes };
