@@ -1,3 +1,5 @@
 desktop-app/node_modules/
 desktop-app/dist/
 desktop-app/build/
+mcp-servers/income-tax-library/config.json
+mcp-servers/income-tax-library/itl-workspace/
