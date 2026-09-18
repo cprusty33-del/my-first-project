@@ -1,0 +1,14 @@
+{
+  "name": "itl-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for Income Tax Library (incometaxlibrary.com): case-law retrieval and petition/appeal drafting",
+  "type": "commonjs",
+  "main": "server.js",
+  "bin": { "itl-mcp": "server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "selftest": "node test/selftest.js"
+  },
+  "engines": { "node": ">=18" }
+}
