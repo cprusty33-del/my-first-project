@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Income Tax Library MCP — Setup Guide</title>
+<style>
+  :root{
+    --cream:#FFFBF2; --card:#FFFFFF; --ink:#2B2620; --muted:#6B6257;
+    --orange:#FBE3CB; --orange-line:#E9B27E;
+    --yellow:#FDF3C8; --yellow-line:#E5CE72;
+    --plum:#EEDDF0; --plum-line:#C9A3CE;
+    --green:#DFEFD6; --green-line:#A8CC96;
+    --rule:#E8DFD2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--cream);color:var(--ink);
+       font-family:"Segoe UI",Calibri,Arial,sans-serif;font-size:16px;line-height:1.6}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 16px 72px}
+  h1{font-size:28px;margin:0 0 4px}
+  h2{font-size:21px;margin:36px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+  h3{font-size:17px;margin:20px 0 6px}
+  p{margin:10px 0}
+  .lede{color:var(--muted);margin-bottom:24px}
+  .step{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:18px 20px;margin:18px 0}
+  .step-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--orange);
+       border:1px solid var(--orange-line);display:flex;align-items:center;
+       justify-content:center;font-weight:700}
+  .step-head h3{margin:0}
+  code,kbd{font-family:Consolas,"Courier New",monospace;font-size:14px}
+  kbd{background:var(--yellow);border:1px solid var(--yellow-line);border-radius:4px;padding:1px 6px}
+  pre{background:var(--yellow);border:1px solid var(--yellow-line);border-radius:8px;
+      padding:12px 14px;overflow-x:auto;margin:12px 0}
+  pre code{font-size:14px;color:var(--ink)}
+  .note{background:var(--green);border:1px solid var(--green-line);border-radius:8px;padding:12px 14px;margin:12px 0}
+  .warn{background:var(--plum);border:1px solid var(--plum-line);border-radius:8px;padding:12px 14px;margin:12px 0}
+  figure{margin:16px 0}
+  figcaption{font-size:13px;color:var(--muted);margin-top:6px}
+  svg{width:100%;height:auto;display:block;border:1px solid var(--rule);border-radius:8px;background:#fff}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:15px}
+  th,td{border:1px solid var(--rule);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--orange)}
+  ul{margin:10px 0 10px 22px;padding:0}
+  li{margin:4px 0}
+  .tag{display:inline-block;background:var(--plum);border:1px solid var(--plum-line);
+       border-radius:20px;padding:1px 10px;font-size:12px}
+  @media print{body{background:#fff}.wrap{padding:0}.step{break-inside:avoid}figure{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Income Tax Library MCP — Setup Guide</h1>
+<p class="lede">Five steps, about ten minutes, on your own Windows PC. After this, Claude can search your
+Income Tax Library subscription and draft appeals and replies from what it finds.</p>
+
+<div class="warn">
+  <strong>About the pictures below.</strong> They are <em>drawings</em> of what the Edge windows look like,
+  drawn to match the buttons and panels you will see. They are not photographs of your account —
+  this setup was prepared on a machine that cannot open incometaxlibrary.com, and a faked screenshot
+  of your own site would only mislead you.
+</div>
+
+<h2>Before you start</h2>
+<table>
+  <tr><th>You need</th><th>How to check</th></tr>
+  <tr><td>Node.js 18 or newer</td><td>Open PowerShell, type <code>node -v</code>. If it says "not recognized", install from nodejs.org.</td></tr>
+  <tr><td>The project folder on your PC</td><td>The folder containing <code>mcp-servers\income-tax-library</code>.</td></tr>
+  <tr><td>A working Income Tax Library login</td><td>You can open the dashboard in Edge without being asked to sign in.</td></tr>
+</table>
+
+<div class="step">
+  <div class="step-head"><div class="num">1</div><h3>Open PowerShell in the right folder</h3></div>
+  <p>In File Explorer, open your project folder, then the <code>mcp-servers</code> folder, then
+  <code>income-tax-library</code>. Click once in the address bar at the top, type <code>powershell</code>
+  and press <kbd>Enter</kbd>. A black window opens, already pointing at the right place.</p>
+  <p>Type this and press <kbd>Enter</kbd>:</p>
+  <pre><code>npm run setup</code></pre>
+  <p>It creates your settings file and tells you what is still missing. You will see a line saying
+  <code>ITL_COOKIE: NOT SET</code>. That is expected — step 3 fixes it.</p>
+</div>
+
+<div class="step">
+  <div class="step-head"><div class="num">2</div><h3>Log in to the site in Microsoft Edge</h3></div>
+  <p>Open <strong>incometaxlibrary.com</strong> in Edge and sign in as usual, until you can see your
+  dashboard (the page with "IMPORTANT CASE LAWS"). Leave this tab open.</p>
+</div>
+
+<div class="step">
+  <div class="step-head"><div class="num">3</div><h3>Copy your session line (the "Cookie")</h3></div>
+  <p>This is the only fiddly step. It tells the program "use the same login the browser is already using."</p>
+
+  <p><strong>3a.</strong> With the dashboard on screen, press <kbd>F12</kbd>. A panel opens on the right
+  or bottom. Click the tab named <strong>Network</strong>.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 380" role="img" aria-label="Drawing of Edge with the F12 developer panel open on the Network tab">
+      <rect x="0" y="0" width="900" height="380" fill="#FFFFFF"/>
+      <rect x="10" y="10" width="880" height="34" fill="#FBE3CB" stroke="#E9B27E"/>
+      <text x="24" y="32" font-family="Segoe UI" font-size="14" fill="#2B2620">Edge  —  incometaxlibrary.com/dashboard</text>
+      <rect x="10" y="52" width="420" height="318" fill="#FFFBF2" stroke="#E8DFD2"/>
+      <text x="28" y="80" font-family="Segoe UI" font-size="14" fill="#6B6257">The website page</text>
+      <text x="28" y="104" font-family="Segoe UI" font-size="13" fill="#2B2620">IMPORTANT CASE LAWS</text>
+      <rect x="28" y="116" width="384" height="22" fill="#FDF3C8" stroke="#E5CE72"/>
+      <rect x="28" y="144" width="384" height="22" fill="#FDF3C8" stroke="#E5CE72"/>
+      <rect x="28" y="172" width="384" height="22" fill="#FDF3C8" stroke="#E5CE72"/>
+
+      <rect x="442" y="52" width="448" height="318" fill="#FFFFFF" stroke="#C9A3CE"/>
+      <rect x="442" y="52" width="448" height="30" fill="#EEDDF0" stroke="#C9A3CE"/>
+      <text x="456" y="72" font-family="Segoe UI" font-size="13" fill="#2B2620">Elements</text>
+      <text x="530" y="72" font-family="Segoe UI" font-size="13" font-weight="700" fill="#2B2620">Network</text>
+      <rect x="522" y="56" width="66" height="22" fill="none" stroke="#A8CC96" stroke-width="3" rx="4"/>
+      <text x="612" y="72" font-family="Segoe UI" font-size="13" fill="#2B2620">Console</text>
+      <text x="690" y="72" font-family="Segoe UI" font-size="13" fill="#2B2620">Sources</text>
+
+      <text x="456" y="106" font-family="Segoe UI" font-size="12" fill="#6B6257">Name</text>
+      <line x1="456" y1="112" x2="876" y2="112" stroke="#E8DFD2"/>
+      <text x="456" y="134" font-family="Consolas" font-size="12" fill="#2B2620">dashboard</text>
+      <text x="456" y="158" font-family="Consolas" font-size="12" fill="#2B2620">style.css</text>
+      <text x="456" y="182" font-family="Consolas" font-size="12" fill="#2B2620">app.js</text>
+      <rect x="450" y="120" width="426" height="20" fill="#DFEFD6" stroke="#A8CC96"/>
+      <text x="456" y="134" font-family="Consolas" font-size="12" fill="#2B2620">dashboard</text>
+
+      <text x="456" y="224" font-family="Segoe UI" font-size="12" fill="#6B6257">Press F12, click Network,</text>
+      <text x="456" y="244" font-family="Segoe UI" font-size="12" fill="#6B6257">then reload the page (F5)</text>
+      <text x="456" y="264" font-family="Segoe UI" font-size="12" fill="#6B6257">and click the first row.</text>
+    </svg>
+    <figcaption>Illustration 1 — Edge with the developer panel open on the <strong>Network</strong> tab.</figcaption>
+  </figure>
+
+  <p><strong>3b.</strong> Press <kbd>F5</kbd> to reload the page. The list fills up. Click the
+  <em>first</em> row in that list (usually named <code>dashboard</code>).</p>
+
+  <p><strong>3c.</strong> On the right, click <strong>Headers</strong>, scroll down to the section
+  <strong>Request Headers</strong>, and find the line beginning <code>Cookie:</code>. Right-click that
+  line and choose <strong>Copy value</strong>.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 340" role="img" aria-label="Drawing of the Headers panel showing the Cookie line under Request Headers">
+      <rect x="0" y="0" width="900" height="340" fill="#FFFFFF"/>
+      <rect x="10" y="10" width="880" height="30" fill="#EEDDF0" stroke="#C9A3CE"/>
+      <text x="24" y="30" font-family="Segoe UI" font-size="13" font-weight="700" fill="#2B2620">Headers</text>
+      <text x="100" y="30" font-family="Segoe UI" font-size="13" fill="#2B2620">Payload</text>
+      <text x="180" y="30" font-family="Segoe UI" font-size="13" fill="#2B2620">Preview</text>
+      <text x="260" y="30" font-family="Segoe UI" font-size="13" fill="#2B2620">Response</text>
+
+      <text x="24" y="70" font-family="Segoe UI" font-size="13" font-weight="700" fill="#6B6257">General</text>
+      <text x="24" y="92" font-family="Consolas" font-size="12" fill="#2B2620">Request URL: https://www.incometaxlibrary.com/dashboard</text>
+      <text x="24" y="112" font-family="Consolas" font-size="12" fill="#2B2620">Request Method: GET</text>
+
+      <text x="24" y="150" font-family="Segoe UI" font-size="13" font-weight="700" fill="#6B6257">Request Headers</text>
+      <text x="24" y="172" font-family="Consolas" font-size="12" fill="#2B2620">Accept: text/html,application/xhtml+xml</text>
+      <text x="24" y="192" font-family="Consolas" font-size="12" fill="#2B2620">Accept-Language: en-IN,en;q=0.9</text>
+
+      <rect x="16" y="202" width="868" height="26" fill="#FDF3C8" stroke="#E5CE72"/>
+      <text x="24" y="220" font-family="Consolas" font-size="12" font-weight="700" fill="#2B2620">Cookie: ci_session=8f2a...; user_token=4b19...; PHPSESSID=77cd...</text>
+
+      <text x="24" y="250" font-family="Consolas" font-size="12" fill="#2B2620">User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)</text>
+
+      <rect x="560" y="236" width="180" height="62" fill="#DFEFD6" stroke="#A8CC96" rx="6"/>
+      <text x="576" y="258" font-family="Segoe UI" font-size="12" fill="#2B2620">Right-click this line</text>
+      <text x="576" y="278" font-family="Segoe UI" font-size="12" font-weight="700" fill="#2B2620">Copy value</text>
+      <path d="M556 250 L452 214" stroke="#A8CC96" stroke-width="2" fill="none"/>
+      <circle cx="450" cy="213" r="4" fill="#A8CC96"/>
+    </svg>
+    <figcaption>Illustration 2 — the <code>Cookie:</code> line under <strong>Request Headers</strong>. The values shown are made-up examples; yours will be different.</figcaption>
+  </figure>
+
+  <p><strong>3d.</strong> Back in PowerShell, type the line below — type the opening quote, press
+  <kbd>Ctrl</kbd>+<kbd>V</kbd> to paste, then type the closing quote and press <kbd>Enter</kbd>:</p>
+  <pre><code>$env:ITL_COOKIE = "paste-the-copied-line-here"</code></pre>
+
+  <div class="warn">
+    <strong>Treat this line like your password.</strong> Anyone holding it can use your subscription
+    until it expires. Do not email it, do not paste it into a chat, and do not commit it to the
+    project. It lives only in that PowerShell window.
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-head"><div class="num">4</div><h3>Let the program learn the site by itself</h3></div>
+  <p>In the same PowerShell window:</p>
+  <pre><code>npm run discover -- --write</code></pre>
+  <p>It opens your dashboard with your login, reads the search box and the case-law links that are
+  really on the page, tries each one, and saves what actually worked. You will see a block of text
+  ending with a list called <code>chosen</code>.</p>
+  <div class="note">
+    <strong>Reading the result.</strong> <code>"chosen"</code> lists what it worked out.
+    <code>"unresolved"</code> lists what it could not — usually because that part of the site loads
+    its results in a way a plain page read cannot see. If anything is unresolved, send me that block
+    of text and I will fill in the missing piece by hand.
+  </div>
+  <p>If it says every page is a <em>login wall</em>, your cookie has expired or was pasted
+  incompletely. Repeat step 3.</p>
+</div>
+
+<div class="step">
+  <div class="step-head"><div class="num">5</div><h3>Tell Claude about the server (once)</h3></div>
+  <pre><code>claude mcp add income-tax-library -- node "$PWD\server.js"</code></pre>
+  <p>Close and reopen Claude Code. Type <code>/mcp</code> — <span class="tag">income-tax-library</span>
+  should appear in the list.</p>
+</div>
+
+<h2>Using it</h2>
+<p>Ask in plain words, for example:</p>
+<ul>
+  <li>"Find Income Tax Library case laws on immunity under section 270AA where penalty was for misreporting."</li>
+  <li>"Pull the full text of the third result and save it as an authority."</li>
+  <li>"Draft a CIT(A) appeal in Form 35 for AY 2018-19 using those authorities. Facts: …"</li>
+</ul>
+<p>The draft comes back with <code>[TO BE FILLED: …]</code> wherever you have not given a fact —
+those blanks are deliberate. Nothing is invented to fill them.</p>
+
+<h2>When something goes wrong</h2>
+<table>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td><code>ITL_COOKIE: NOT SET</code></td><td>The PowerShell window was closed and reopened.</td><td>Repeat step 3d in the new window.</td></tr>
+  <tr><td>Results look like a login page</td><td>The cookie expired.</td><td>Repeat step 3 from the start.</td></tr>
+  <tr><td><code>endpoint "search" is not configured</code></td><td>Step 4 has not run, or found nothing.</td><td>Run step 4; if unresolved, send me the output.</td></tr>
+  <tr><td><code>npm is not recognized</code></td><td>Node.js is not installed.</td><td>Install Node.js 18+ from nodejs.org, reopen PowerShell.</td></tr>
+</table>
+
+<h2>Two standing cautions</h2>
+<ul>
+  <li>The cookie expires — expect to repeat step 3 every so often. That is normal, not a fault.</li>
+  <li>Every draft is a skeleton with your facts in it. Limitation periods, fees, pre-deposit and the
+  form in force for the relevant year remain yours to verify before filing.</li>
+</ul>
+
+</div>
+</body>
+</html>

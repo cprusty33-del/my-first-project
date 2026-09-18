@@ -17,6 +17,9 @@ retrieval tools fail with an explicit message rather than fetching a guessed URL
 
 ## Setup
 
+A plain-language, illustrated walkthrough of the steps below is in
+[`docs/setup-guide.html`](docs/setup-guide.html) — open it in a browser.
+
 1. `npm run setup` — creates `config.json` from the example and prints what is still missing.
 2. Supply your session:
    - **Cookie mode (simplest):** log in to the site in your browser, copy the request
