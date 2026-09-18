@@ -16,6 +16,7 @@ const conf = require('./src/config');
 const http = require('./src/http');
 const html = require('./src/html');
 const drafts = require('./src/drafts');
+const discovery = require('./src/discover');
 
 const NAME = 'income-tax-library';
 const VERSION = '0.1.0';
@@ -81,6 +82,19 @@ const TOOLS = [
       const res = await http.request(cfg, { method: a.method || 'GET', path: a.path, query: a.query, form: a.form, body: a.body, headers: a.headers });
       return { request: { method: a.method || 'GET', url: res.url }, status: res.status, contentType: res.contentType, ...html.summarize(res, { limit: a.limit }) };
     }
+  },
+  {
+    name: 'itl_discover_endpoints',
+    description: 'Work out how this site is actually queried: fetch the seed pages with your session, read their real forms and links, verify each candidate request, and (with write=true) save the search/recent/document recipes into config.json. Nothing is guessed — candidates come only from the site\'s own HTML and are tested before being proposed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        seeds: S.arr('Pages to learn from. Default: "/" and "/dashboard".'),
+        sampleQuery: S.str('Word used to test a candidate search, default "penalty".'),
+        write: S.bool('Save the chosen recipes into config.json. Default false (report only).')
+      }
+    },
+    handler: async (a) => discovery.discover(cfg, { seeds: a.seeds, sampleQuery: a.sampleQuery, write: a.write === true })
   },
   {
     name: 'itl_set_endpoint',

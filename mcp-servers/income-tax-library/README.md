@@ -9,14 +9,15 @@ Node 18+, no dependencies.
 ## Why no endpoints are shipped
 
 The site is behind a login and was **not reachable from the machine this server was
-written on**, so its search/case URLs could not be observed. Nothing about its request
-format is assumed here. You record the real requests once (below) and they are stored in
-`config.json`; until then the search tools fail with an explicit message rather than
-fetching a guessed URL.
+written on** (the session's egress policy refused the host), so its search/case URLs
+could not be observed. Nothing about its request format is assumed here. Instead,
+`npm run discover` reads the site's own forms and links on your machine and verifies
+each candidate request before saving it to `config.json`. Until a recipe exists, the
+retrieval tools fail with an explicit message rather than fetching a guessed URL.
 
 ## Setup
 
-1. `cp config.example.json config.json` and set `baseUrl` if it differs.
+1. `npm run setup` — creates `config.json` from the example and prints what is still missing.
 2. Supply your session:
    - **Cookie mode (simplest):** log in to the site in your browser, copy the request
      `Cookie` header (DevTools → Network → any request → Request Headers) and set it as
@@ -48,15 +49,28 @@ Or in a client config file:
 
 ## Discovering endpoints (one time)
 
-1. In the browser, run a case-law search on the site with DevTools → Network open.
-2. Note the request that returns the results: method, path, and query/form field names.
-3. Ask Claude to record it, e.g.:
-   *"Set the search endpoint: GET /case-law/search with query q={query} and page={page}"*
-   → the `itl_set_endpoint` tool writes it into `config.json`.
-4. Do the same for `recent` (the dashboard's Tax type / Year / Month filter) and
-   `document` (a single case-law page, usually `/…/{id}`).
-5. `itl_probe` fetches any path on the site with your session and shows the status,
-   text, links and tables — use it to confirm a recipe before recording it.
+With the cookie in place, the server learns the requests itself:
+
+```bash
+npm run discover              # report only
+npm run discover -- --write   # save the recipes into config.json
+```
+
+or ask Claude: *"discover the Income Tax Library endpoints and save them"* →
+the `itl_discover_endpoints` tool.
+
+What it does: fetches `/` and `/dashboard` with your session, reads the **real
+forms** (action, method, field names) and the **real links** on those pages, maps
+field names to `{query}` / `{taxType}` / `{year}` / `{month}` / `{page}`, derives the
+case-law URL shape (e.g. `/case-law/{id}`) from links that actually appear, then
+**issues each candidate request and verifies the response** before proposing it. A
+login wall is reported, never worked around. Nothing is written unless you pass
+`--write` / `write: true`.
+
+Anything it cannot resolve stays unset and is listed under `unresolved`. Capture
+those by hand: run the action in the browser with DevTools → Network open, then
+tell Claude, e.g. *"Set the search endpoint: GET /case-law/search with query
+q={query} and page={page}"* → `itl_set_endpoint`.
 
 Placeholders available in a recipe: `{query}`, `{taxType}`, `{year}`, `{month}`,
 `{page}`, `{id}`. Query/form entries whose placeholder is not supplied at call time are
@@ -68,7 +82,8 @@ dropped from the request.
 | --- | --- |
 | `itl_status` | Config, auth state, which recipes exist, workspace path |
 | `itl_login` | Form login (login mode only) |
-| `itl_probe` | Fetch any path on the site; endpoint discovery |
+| `itl_probe` | Fetch any path on the site; manual endpoint discovery |
+| `itl_discover_endpoints` | Learn and verify the search/recent/document requests from the site's own pages |
 | `itl_set_endpoint` | Save a request recipe into `config.json` |
 | `itl_search_case_laws` | Search using the `search` recipe |
 | `itl_recent_case_laws` | Recent case laws using the `recent` recipe |

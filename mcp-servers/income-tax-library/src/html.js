@@ -72,6 +72,39 @@ function tables(html) {
   return out;
 }
 
+// Forms, with their action, method and field names — the honest way to learn
+// how a site's search is submitted, instead of guessing a query parameter.
+function forms(html, baseUrl) {
+  const out = [];
+  const fRe = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let m;
+  const clean = stripNoise(html);
+  while ((m = fRe.exec(clean))) {
+    const attrs = m[1];
+    const inner = m[2];
+    const attr = (n) => (attrs.match(new RegExp(n + '\\s*=\\s*"([^"]*)"', 'i')) || attrs.match(new RegExp(n + "\\s*=\\s*'([^']*)'", 'i')) || [])[1] || '';
+    let action = attr('action');
+    if (baseUrl) { try { action = new URL(action || '', baseUrl).href; } catch { /* keep raw */ } }
+    const fields = [];
+    const iRe = /<(input|select|textarea)\b([^>]*)>/gi;
+    let i;
+    while ((i = iRe.exec(inner))) {
+      const a = i[2];
+      const get = (n) => (a.match(new RegExp(n + '\\s*=\\s*"([^"]*)"', 'i')) || a.match(new RegExp(n + "\\s*=\\s*'([^']*)'", 'i')) || [])[1] || '';
+      const name = get('name');
+      if (!name) continue;
+      fields.push({ name, tag: i[1].toLowerCase(), type: get('type') || (i[1].toLowerCase() === 'input' ? 'text' : i[1].toLowerCase()), value: get('value') });
+    }
+    out.push({ action, method: (attr('method') || 'GET').toUpperCase(), id: attr('id'), name: attr('name'), fields });
+  }
+  return out;
+}
+
+// True when the response looks like a login wall rather than content.
+function looksLikeLogin(htmlText) {
+  return forms(htmlText).some((f) => f.fields.some((x) => x.type === 'password'));
+}
+
 // Turns any response into something a model can read, without guessing schema.
 function summarize(res, opts = {}) {
   const limit = opts.limit || 20000;
@@ -89,8 +122,9 @@ function summarize(res, opts = {}) {
     text: text.slice(0, limit),
     truncated: text.length > limit,
     links: links(res.body, res.url).slice(0, opts.maxLinks || 80),
+    forms: forms(res.body, res.url),
     tables: tables(res.body).slice(0, opts.maxTables || 10)
   };
 }
 
-module.exports = { toText, title, links, tables, summarize, decode };
+module.exports = { toText, title, links, tables, forms, looksLikeLogin, summarize, decode };

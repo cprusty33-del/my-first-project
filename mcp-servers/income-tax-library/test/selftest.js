@@ -9,8 +9,25 @@ const assert = require('assert');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'itl-mcp-test-'));
 
+let authed = true;
 const site = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  if (!authed) {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    return res.end('<html><body><form action="/login" method="post"><input name="email"><input name="password" type="password"></form></body></html>');
+  }
+  if (u.pathname === '/' || u.pathname === '/dashboard') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    return res.end(`<html><head><title>Dashboard</title></head><body>
+      <form id="caseSearch" action="/search" method="get">
+        <input type="text" name="q"><select name="taxType"><option>Direct Tax</option></select>
+        <select name="year"><option>2026</option></select><select name="month"><option>September</option></select>
+        <input type="submit" value="SEARCH NOW">
+      </form>
+      <a href="/case/99">ABC Ltd v. ACIT - penalty u/s 270A</a>
+      <a href="/case/101">XYZ Ltd v. DCIT - reassessment</a>
+      <a href="/about">About</a></body></html>`);
+  }
   if (u.pathname === '/search') {
     res.writeHead(200, { 'content-type': 'text/html' });
     return res.end(`<html><head><title>Results for ${u.searchParams.get('q')}</title></head><body>
@@ -118,6 +135,32 @@ function rpc(child, pending) {
 
   const badTemplate = await tool('itl_draft', { template: 'no-such' });
   assert.ok(badTemplate.isError, 'unknown template errors');
+
+  // Endpoint discovery, learned from the stub site's own HTML.
+  fs.writeFileSync(cfgPath, JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, workspace: path.join(tmp, 'ws'), endpoints: {} }, null, 2));
+  const disc = await tool('itl_discover_endpoints', { sampleQuery: 'penalty' });
+  assert.ok(disc.data.ok, 'discovery ran');
+  assert.strictEqual(disc.data.chosen.search.path, '/search');
+  assert.strictEqual(disc.data.chosen.search.query.q, '{query}');
+  assert.strictEqual(disc.data.chosen.search.query.taxType, '{taxType}');
+  assert.strictEqual(disc.data.chosen.document.path, '/case/{id}');
+  assert.ok(disc.data.written === null, 'report-only by default');
+  assert.ok(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).endpoints.search === undefined, 'nothing written without write=true');
+
+  const disc2 = await tool('itl_discover_endpoints', { write: true });
+  assert.strictEqual(disc2.data.written, cfgPath, 'recipes written');
+  const afterWrite = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  assert.strictEqual(afterWrite.endpoints.document.path, '/case/{id}');
+  const searchAfter = await tool('itl_search_case_laws', { query: 'penalty' });
+  assert.strictEqual(searchAfter.data.status, 200, 'discovered search recipe works');
+  const docAfter = await tool('itl_get_document', { id: '99' });
+  assert.ok(docAfter.data.text.includes('penalty was deleted'), 'discovered document recipe works');
+
+  authed = false;
+  const discLoggedOut = await tool('itl_discover_endpoints', {});
+  assert.strictEqual(discLoggedOut.data.ok, false);
+  assert.ok(/login wall/i.test(discLoggedOut.data.advice), 'login wall reported, not worked around');
+  authed = true;
 
   child.stdin.end();
   site.close();
