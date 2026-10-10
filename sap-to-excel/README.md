@@ -1,7 +1,7 @@
-# SAP to Excel (for TeamMate Analytics)
+# SAP to Excel (for ActiveData for Excel)
 
 Copies one SAP table into a normal Excel file. Open that file in Excel and
-run TeamMate Analytics on it as usual.
+run ActiveData (or any Excel add-in, such as TeamMate Analytics) on it as usual.
 
 - **Read only.** It uses SAP's standard function `RFC_READ_TABLE`. Nothing is changed in SAP.
 - **No AI.** The program talks only to your SAP server.

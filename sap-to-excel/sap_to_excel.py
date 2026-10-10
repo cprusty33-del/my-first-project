@@ -1,4 +1,4 @@
-"""Read one SAP table (view only) and save it as an Excel file for TeamMate Analytics.
+"""Read one SAP table (view only) and save it as an Excel file for ActiveData for Excel.
 
 Uses the standard SAP function RFC_READ_TABLE through PyRFC. Nothing is written
 to SAP. The password is asked for on screen each time and is never saved.
