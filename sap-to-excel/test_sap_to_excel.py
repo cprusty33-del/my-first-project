@@ -66,7 +66,29 @@ class Tests(unittest.TestCase):
         from openpyxl import load_workbook
         wb = load_workbook(path)
         self.assertEqual(wb.sheetnames, ["BKPF", "Fields", "Extract details"])
-        self.assertEqual([c.value for c in wb["BKPF"][1]], ["BELNR", "DMBTR"])
+        sheet = wb["BKPF"]
+        self.assertEqual([c.value for c in sheet[1]], ["Document number (BELNR)", "Amount (DMBTR)"])
+        self.assertEqual(sheet.freeze_panes, "A2")
+        self.assertEqual(sheet.auto_filter.ref, "A1:B3")
+        self.assertEqual(sheet["A2"].number_format, "@")
+        self.assertEqual(sheet["B3"].value, -250.0)
+        self.assertEqual(sheet["B3"].number_format, "#,##0.00###")
+        self.assertEqual([c.value for c in wb["Fields"][2]], ["Document number (BELNR)", "BELNR", "Document number", "Yes", "C", 10, None])
+
+    def test_rows_are_sorted_by_key_and_dates_formatted(self):
+        global DATA
+        saved, DATA = DATA, list(reversed(DATA))
+        try:
+            fields, rows = s.extract(FakeConnection(), "BKPF", ["BELNR", "BUDAT"], "", 100)
+        finally:
+            DATA = saved
+        self.assertEqual([r[0] for r in rows], ["0000000001", "0000000002"])
+        path = os.path.join(tempfile.mkdtemp(), "out.xlsx")
+        s.save_excel(path, "BKPF", fields, rows, "", "AUDITOR", "PRD", headers="code")
+        from openpyxl import load_workbook
+        sheet = load_workbook(path)["BKPF"]
+        self.assertEqual(sheet["B1"].value, "BUDAT")
+        self.assertEqual(sheet["B2"].number_format, "DD-MM-YYYY")
 
     def test_where_is_split_into_short_lines(self):
         where = " AND ".join(f"FIELD{i} = 'VALUE{i}'" for i in range(10))

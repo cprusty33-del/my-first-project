@@ -41,6 +41,8 @@ lang = EN
 
 [extract]
 max_rows = 100000
+; Column headings: both = "Posting Date (BUDAT)", text = "Posting Date", code = "BUDAT"
+headers = both
 ; Folder for the Excel files (blank = "output" folder next to this file)
 output_folder = 
 """
@@ -152,6 +154,13 @@ def convert(value, sap_type):
         if number is not None and number.is_integer() and "." not in text and "E" not in text.upper():
             return int(number)
         return number
+    if sap_type == "T":
+        if re.fullmatch(r"\d{6}", value) and value != "000000":
+            try:
+                return dt.time(int(value[:2]), int(value[2:4]), int(value[4:]))
+            except ValueError:
+                return value
+        return None if value in ("", "000000") else value
     if sap_type == "D":
         if re.fullmatch(r"\d{8}", value) and value != "00000000":
             try:
@@ -174,9 +183,9 @@ def extract(conn, table, field_names, where, max_rows):
     else:
         fields = all_fields
 
-    key_names = None
-    if sum(f["length"] for f in fields) > ROW_WIDTH:
-        key_names = read_key_fields(conn, table)
+    key_names = read_key_fields(conn, table)
+    for f in fields:
+        f["key"] = bool(key_names) and f["name"] in key_names
     groups = plan_groups(fields, key_names)
     options = split_where(where) if where else []
 
@@ -197,24 +206,78 @@ def extract(conn, table, field_names, where, max_rows):
                     raise RuntimeError("The table changed while it was being read. Please run again.")
                 merged[index_of[key]].update(row)
 
+    # Put rows in key order (e.g. company, document number, year) so the sheet reads naturally
+    sort_keys = [f["name"] for f in fields if f["key"]]
+    if sort_keys:
+        merged.sort(key=lambda r: tuple(r[k] for k in sort_keys))
+
     types = {f["name"]: f["type"] for f in fields}
     rows = [[convert(r[f["name"]], types[f["name"]]) for f in fields] for r in merged]
     return fields, rows
 
 
-def save_excel(path, table, fields, rows, where, user, system_label):
+def column_title(field, headers):
+    """Header text: 'Posting Date (BUDAT)', just the description, or just the SAP code."""
+    if headers == "code" or not field["text"]:
+        return field["name"]
+    if headers == "text":
+        return field["text"]
+    return f"{field['text']} ({field['name']})"
+
+
+def number_format(sap_type):
+    if sap_type == "D":
+        return "DD-MM-YYYY"
+    if sap_type == "T":
+        return "HH:MM:SS"
+    if sap_type == "P":
+        return "#,##0.00###"
+    if sap_type in ("I", "b", "s", "8"):
+        return "0"
+    if sap_type in ("C", "N", "g", "y"):
+        return "@"  # text: keeps leading zeros, e.g. document 0000000123
+    return None
+
+
+def save_excel(path, table, fields, rows, where, user, system_label, headers="both"):
+    """Write an analysis-ready sheet: one header row, one row per record, typed columns, filter on."""
     from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook(write_only=True)
-    data = wb.create_sheet(table[:31])
-    data.append([f["name"] for f in fields])
+    data = wb.create_sheet(table.replace("/", "_")[:31])
+    titles = [column_title(f, headers) for f in fields]
+    formats = [number_format(f["type"]) for f in fields]
+    last_col = get_column_letter(max(len(fields), 1))
+    data.freeze_panes = "A2"
+    data.auto_filter.ref = f"A1:{last_col}{len(rows) + 1}"
+    for i, (f, title) in enumerate(zip(fields, titles), start=1):
+        width = max(len(title), 12 if f["type"] in ("D", "P") else min(f["length"], 40)) + 4
+        data.column_dimensions[get_column_letter(i)].width = min(width, 50)
+
+    bold = Font(bold=True)
+    header = []
+    for title in titles:
+        cell = WriteOnlyCell(data, value=title)
+        cell.font = bold
+        header.append(cell)
+    data.append(header)
     for row in rows:
-        data.append(row)
+        out = []
+        for value, fmt in zip(row, formats):
+            cell = WriteOnlyCell(data, value=value)
+            if fmt and value is not None:
+                cell.number_format = fmt
+            out.append(cell)
+        data.append(out)
 
     info = wb.create_sheet("Fields")
-    info.append(["Field", "Description", "SAP type", "Length"])
-    for f in fields:
-        info.append([f["name"], f["text"], f["type"], f["length"]])
+    info.append(["Column", "SAP field", "Description", "Key field", "SAP type", "Length", "Empty in this extract"])
+    for i, (f, title) in enumerate(zip(fields, titles)):
+        empty = all(r[i] in (None, "") for r in rows)
+        info.append([title, f["name"], f["text"], "Yes" if f["key"] else "", f["type"], f["length"], "Yes" if empty else ""])
 
     log = wb.create_sheet("Extract details")
     log.append(["Item", "Value"])
@@ -299,7 +362,7 @@ def main():
     out_dir = defaults.get("output_folder") or os.path.join(HERE, "output")
     os.makedirs(out_dir, exist_ok=True)
     out = args.out or os.path.join(out_dir, f"{table.replace('/', '_')}_{dt.datetime.now():%Y%m%d_%H%M%S}.xlsx")
-    save_excel(out, table, fields, rows, where, user, system_label)
+    save_excel(out, table, fields, rows, where, user, system_label, defaults.get("headers", "both"))
     print(f"Done. {len(rows)} rows saved to:\n{out}")
     if len(rows) == max_rows:
         print(f"Note: the limit of {max_rows} rows was reached; there may be more rows in SAP.")

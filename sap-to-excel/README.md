@@ -38,9 +38,16 @@ Double-click **`SAP-to-Excel.exe`** and answer the questions:
 | Filter (Enter = none) | `BUKRS = '1000' AND GJAHR = '2025'` |
 | Maximum rows | `100000` |
 
-The Excel file is saved in the `output` folder next to the exe. It has three sheets:
-the data, a list of fields with descriptions, and the extract details
-(table, filter, user, date and time) for your audit working papers.
+The Excel file is saved in the `output` folder next to the exe and is ready for
+ActiveData straight away:
+
+- **Data sheet** – one heading row, one row per SAP record, nothing merged or blank above it.
+  Headings read like `Posting Date (BUDAT)` (change with `headers` in `sap_config.ini`).
+  Rows are sorted by the table's key fields. Amounts are numbers, dates are real dates
+  (DD-MM-YYYY), document numbers stay as text with leading zeros. Header row is frozen and filters are on.
+- **Fields sheet** – every column with its SAP field name, description, whether it is a key field,
+  and whether it is empty in this extract.
+- **Extract details sheet** – table, filter, SAP system, user, date and time, row count, for your working papers.
 
 ## Good to know
 
