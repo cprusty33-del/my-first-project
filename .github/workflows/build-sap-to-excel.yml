@@ -1,0 +1,53 @@
+name: Build SAP-to-Excel.exe
+
+on:
+  push:
+    branches: [claude/relaxed-ramanujan-3i5d17]
+    paths: [sap-to-excel/sap_to_excel.py, .github/workflows/build-sap-to-excel.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install pyrfc==3.3.1 "openpyxl>=3.1" pyinstaller
+      - name: Test
+        working-directory: sap-to-excel
+        run: python -m unittest -v test_sap_to_excel
+      - name: Build single exe (SAP SDK is not bundled)
+        working-directory: sap-to-excel
+        run: >
+          pyinstaller --onefile --console --name SAP-to-Excel
+          --copy-metadata pyrfc --collect-submodules pyrfc
+          --hidden-import datetime --hidden-import decimal --hidden-import enum
+          --hidden-import locale --hidden-import threading
+          sap_to_excel.py
+      - name: Smoke test the exe
+        shell: bash
+        working-directory: sap-to-excel
+        run: |
+          printf '[sap]\nashost = 127.0.0.1\nsysnr = 00\nclient = 100\nuser = TEST\n' > smoke.ini
+          out=$(echo | ./dist/SAP-to-Excel.exe --config smoke.ini --table T001 --fields BUKRS --where "" --max-rows 1 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "SAP NW RFC SDK was not found"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SAP-to-Excel
+          path: sap-to-excel/dist/SAP-to-Excel.exe
+      - name: Save exe to the branch
+        shell: bash
+        run: |
+          cp sap-to-excel/dist/SAP-to-Excel.exe releases/SAP-to-Excel.exe
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/SAP-to-Excel.exe
+          git commit -m "Build SAP-to-Excel.exe" || exit 0
+          git push origin HEAD:${{ github.ref_name }}

@@ -18,7 +18,34 @@ OPTION_WIDTH = 72        # each WHERE line sent to SAP is at most 72 characters
 EXCEL_MAX_ROWS = 1_048_575
 NUMBER_TYPES = {"P", "I", "F", "b", "s", "8"}
 
-HERE = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False) else __file__))
+FROZEN = getattr(sys, "frozen", False)  # True when running as the single .exe
+CONFIG_TEMPLATE = """; SAP connection settings. Get these values from SAP Logon (right-click your
+; system > Properties) or from your SAP/IT team.
+; DO NOT put your password here. The program asks for it every time.
+
+[sap]
+; Application server (host name or IP) and system number, e.g. 00
+ashost = 
+sysnr = 00
+; SAP client, e.g. 100
+client = 
+; Your SAP user ID (leave blank to be asked each time)
+user = 
+lang = EN
+; Only if your company uses a message server / logon group instead of ashost:
+; mshost = 
+; sysid = 
+; group = PUBLIC
+; Only if your company uses a SAP router string:
+; saprouter = 
+
+[extract]
+max_rows = 100000
+; Folder for the Excel files (blank = "output" folder next to this file)
+output_folder = 
+"""
+
+HERE = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 
 
 def split_where(where):
@@ -219,9 +246,23 @@ def main():
 
     cfg = configparser.ConfigParser()
     if not cfg.read(args.config):
-        sys.exit(f"Settings file not found: {args.config}")
+        with open(args.config, "w", encoding="utf-8") as f:
+            f.write(CONFIG_TEMPLATE)
+        sys.exit(f"A settings file was created here:\n{args.config}\n"
+                 "Open it in Notepad, fill in the SAP server, system number and client, then run again.")
     sap = cfg["sap"]
+    if not sap.get("client") or not (sap.get("ashost") or sap.get("mshost")):
+        sys.exit(f"Please fill in the SAP server and client in:\n{args.config}")
     defaults = cfg["extract"] if cfg.has_section("extract") else {}
+
+    local_sdk = os.path.join(HERE, "nwrfcsdk")
+    if not os.environ.get("SAPNWRFC_HOME") and os.path.isdir(local_sdk):
+        os.environ["SAPNWRFC_HOME"] = local_sdk
+    try:
+        from pyrfc import Connection
+    except ImportError:
+        sys.exit("The SAP NW RFC SDK was not found. Put its \"nwrfcsdk\" folder next to this program "
+                 "(so that nwrfcsdk\\lib\\sapnwrfc.dll exists), or set SAPNWRFC_HOME. See README.md.")
 
     interactive = not args.table
     table = (args.table or ask("SAP table name (e.g. BKPF)")).upper()
@@ -246,11 +287,6 @@ def main():
     if sap.get("saprouter"):
         params["saprouter"] = sap["saprouter"]
 
-    try:
-        from pyrfc import Connection
-    except ImportError:
-        sys.exit("PyRFC is not installed. See README.md, step 2.")
-
     print("Connecting to SAP ...")
     conn = Connection(**params)
     try:
@@ -269,10 +305,27 @@ def main():
         print(f"Note: the limit of {max_rows} rows was reached; there may be more rows in SAP.")
 
 
-if __name__ == "__main__":
+def run():
     try:
         main()
+        code = 0
     except KeyboardInterrupt:
-        sys.exit("Cancelled.")
+        print("Cancelled.")
+        code = 1
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            print(exc.code)
+        code = 0 if exc.code in (None, 0) else 1
     except Exception as exc:  # show a plain message instead of a stack trace
-        sys.exit(f"Error: {exc}")
+        print(f"Error: {exc}")
+        code = 1
+    if FROZEN:  # keep the window open after a double-click
+        try:
+            input("\nPress Enter to close.")
+        except EOFError:
+            pass
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    run()
